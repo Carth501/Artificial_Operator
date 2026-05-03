@@ -1,0 +1,56 @@
+{
+	"thrusters": [
+		{
+			"id": "thruster_x_positive",
+			"label": "Fire X Thrusters +",
+			"axis": "x",
+			"direction": 1,
+			"acceleration_per_second": 1.5
+		},
+		{
+			"id": "thruster_x_negative",
+			"label": "Fire X Thrusters -",
+			"axis": "x",
+			"direction": -1,
+			"acceleration_per_second": 1.5
+		},
+		{
+			"id": "thruster_y_positive",
+			"label": "Fire Y Thrusters +",
+			"axis": "y",
+			"direction": 1,
+			"acceleration_per_second": 1.5
+		},
+		{
+			"id": "thruster_y_negative",
+			"label": "Fire Y Thrusters -",
+			"axis": "y",
+			"direction": -1,
+			"acceleration_per_second": 1.5
+		},
+		{
+			"id": "thruster_z_positive",
+			"label": "Fire Z Thrusters +",
+			"axis": "z",
+			"direction": 1,
+			"acceleration_per_second": 1.5
+		},
+		{
+			"id": "thruster_z_negative",
+			"label": "Fire Z Thrusters -",
+			"axis": "z",
+			"direction": -1,
+			"acceleration_per_second": 1.5
+		}
+	],
+	"conversions": [
+		{
+			"id": "convert_h2o_to_fuel",
+			"label": "Convert H2O to Fuel",
+			"source_variable": "H2O",
+			"source_amount": 2.0,
+			"target_variable": "Fuel",
+			"target_amount": 1.2
+		}
+	]
+}

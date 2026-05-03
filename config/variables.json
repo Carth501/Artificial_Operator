@@ -1,0 +1,145 @@
+{
+	"tick_seconds": 0.1,
+	"random_seed": 17,
+	"variables": [
+		{
+			"name": "O2",
+			"label": "O2",
+			"group": "resource",
+			"unit": "kg",
+			"initial": 100.0,
+			"minimum": 0.0,
+			"maximum": 100.0,
+			"precision": 2,
+			"profiles": [
+				{
+					"type": "constant",
+					"rate_per_second": -0.05
+				}
+			]
+		},
+		{
+			"name": "N2",
+			"label": "N2",
+			"group": "resource",
+			"unit": "kg",
+			"initial": 300.0,
+			"minimum": 0.0,
+			"maximum": 300.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "Fuel",
+			"label": "Fuel",
+			"group": "resource",
+			"unit": "kg",
+			"initial": 70.0,
+			"minimum": 0.0,
+			"maximum": 100.0,
+			"precision": 2,
+			"profiles": [
+				{
+					"type": "action_rate",
+					"rate_per_second": -0.8,
+					"activation": "any",
+					"action_ids": [
+						"thruster_x_positive",
+						"thruster_x_negative",
+						"thruster_y_positive",
+						"thruster_y_negative",
+						"thruster_z_positive",
+						"thruster_z_negative"
+					]
+				}
+			]
+		},
+		{
+			"name": "CO2",
+			"label": "CO2",
+			"group": "resource",
+			"unit": "kg",
+			"initial": 5.0,
+			"minimum": 0.0,
+			"maximum": 100.0,
+			"precision": 2,
+			"profiles": [
+				{
+					"type": "constant",
+					"rate_per_second": 0.05
+				}
+			]
+		},
+		{
+			"name": "H2O",
+			"label": "H2O",
+			"group": "resource",
+			"unit": "kg",
+			"initial": 80.0,
+			"minimum": 0.0,
+			"maximum": 100.0,
+			"precision": 2,
+			"profiles": [
+				{
+					"type": "stochastic",
+					"min_rate_per_second": -0.03,
+					"max_rate_per_second": -0.005
+				}
+			]
+		},
+		{
+			"name": "position_x",
+			"label": "Position X",
+			"group": "position",
+			"unit": "m",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "position_y",
+			"label": "Position Y",
+			"group": "position",
+			"unit": "m",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "position_z",
+			"label": "Position Z",
+			"group": "position",
+			"unit": "m",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "velocity_x",
+			"label": "Velocity X",
+			"group": "velocity",
+			"unit": "m/s",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "velocity_y",
+			"label": "Velocity Y",
+			"group": "velocity",
+			"unit": "m/s",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
+			"name": "velocity_z",
+			"label": "Velocity Z",
+			"group": "velocity",
+			"unit": "m/s",
+			"initial": 0.0,
+			"precision": 2,
+			"profiles": []
+		}
+	]
+}
