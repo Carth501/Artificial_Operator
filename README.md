@@ -58,6 +58,8 @@ To reuse a trained policy instead of the default target-seeking parameters, pass
 python ai_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --policy-file policies/target-policy.json
 ```
 
+When the saved policy includes training metadata, AI mode will also print the curriculum size, curriculum seed, and average training reward recorded in that file.
+
 ## Run Training Mode
 
 Use the shared main entry point with `--mode train`:
@@ -81,6 +83,16 @@ python train_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps
 ```
 
 You can also use `--policy-file` in training mode to seed training from an existing saved policy instead of starting from the default parameters.
+
+Saved policy files now include the learned parameters plus optional training metadata such as training rounds, curriculum size, curriculum seed, anchor target, target ranges, reward summary, and the anchor stop reason.
+
+To train a policy across multiple target positions instead of a single coordinate, add the curriculum flags:
+
+```bash
+python train_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --training-rounds 2 --curriculum-targets 3 --curriculum-seed 17 --target-range-x 6 --target-range-y 4 --target-range-z 2
+```
+
+The requested target remains the anchor objective, and the trainer generates additional deterministic targets within the provided axis ranges. Training then scores each candidate policy across the full curriculum and reports both total and average reward plus the curriculum success rate.
 
 ## Run Tests
 

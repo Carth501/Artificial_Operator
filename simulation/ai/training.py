@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import random
 from typing import Callable
 
 from simulation.engine import SimulationEngine
@@ -15,21 +16,34 @@ EngineFactory = Callable[[], SimulationEngine]
 
 
 @dataclass(frozen=True)
+class TargetPositionCurriculum:
+    objectives: tuple[TargetPositionObjective, ...]
+    seed: int
+    target_ranges: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
 class TrainingEvaluation:
     round_index: int
     parameters: TargetPolicyParameters
     total_reward: float
+    average_reward: float
     success: bool
+    success_rate: float
     stop_reason: str
     distance_to_target: float
+    curriculum_size: int
 
 
 @dataclass(frozen=True)
 class TrainingResult:
     training_rounds: int
+    curriculum_size: int
     best_parameters: TargetPolicyParameters
     best_total_reward: float
+    best_average_reward: float
     best_run_result: AIRunResult
+    best_run_results: tuple[AIRunResult, ...]
     evaluations: tuple[TrainingEvaluation, ...]
 
 
@@ -50,52 +64,61 @@ class TargetPositionPolicyTrainer:
         dt_seconds: float | None = None,
         initial_parameters: TargetPolicyParameters | None = None,
     ) -> TrainingResult:
+        return self.train_curriculum(
+            (objective,),
+            rounds=rounds,
+            dt_seconds=dt_seconds,
+            initial_parameters=initial_parameters,
+        )
+
+    def train_curriculum(
+        self,
+        objectives: tuple[TargetPositionObjective, ...],
+        *,
+        rounds: int = 6,
+        dt_seconds: float | None = None,
+        initial_parameters: TargetPolicyParameters | None = None,
+    ) -> TrainingResult:
         if rounds <= 0:
             raise ValueError("rounds must be greater than zero")
+        if not objectives:
+            raise ValueError("at least one objective is required")
 
         best_parameters = TargetPolicyParameters() if initial_parameters is None else initial_parameters
-        best_run_result = self._evaluate(best_parameters, objective, dt_seconds)
+        best_run_results = self._evaluate_curriculum(best_parameters, objectives, dt_seconds)
+        best_evaluation = _summarize_training_evaluation(0, best_parameters, best_run_results)
         evaluations = [
-            TrainingEvaluation(
-                round_index=0,
-                parameters=best_parameters,
-                total_reward=best_run_result.total_reward,
-                success=best_run_result.success,
-                stop_reason=best_run_result.stop_reason,
-                distance_to_target=best_run_result.distance_to_target,
-            )
+            best_evaluation
         ]
 
         for round_index in range(1, rounds + 1):
             candidate_parameters = self._build_candidates(best_parameters)
             round_best_parameters = best_parameters
-            round_best_run_result = best_run_result
+            round_best_run_results = best_run_results
+            round_best_evaluation = best_evaluation
 
             for parameters in candidate_parameters:
-                run_result = self._evaluate(parameters, objective, dt_seconds)
-                evaluations.append(
-                    TrainingEvaluation(
-                        round_index=round_index,
-                        parameters=parameters,
-                        total_reward=run_result.total_reward,
-                        success=run_result.success,
-                        stop_reason=run_result.stop_reason,
-                        distance_to_target=run_result.distance_to_target,
-                    )
-                )
+                run_results = self._evaluate_curriculum(parameters, objectives, dt_seconds)
+                evaluation = _summarize_training_evaluation(round_index, parameters, run_results)
+                evaluations.append(evaluation)
 
-                if run_result.total_reward > round_best_run_result.total_reward:
+                if evaluation.average_reward > round_best_evaluation.average_reward:
                     round_best_parameters = parameters
-                    round_best_run_result = run_result
+                    round_best_run_results = run_results
+                    round_best_evaluation = evaluation
 
             best_parameters = round_best_parameters
-            best_run_result = round_best_run_result
+            best_run_results = round_best_run_results
+            best_evaluation = round_best_evaluation
 
         return TrainingResult(
             training_rounds=rounds,
+            curriculum_size=len(objectives),
             best_parameters=best_parameters,
-            best_total_reward=best_run_result.total_reward,
-            best_run_result=best_run_result,
+            best_total_reward=best_evaluation.total_reward,
+            best_average_reward=best_evaluation.average_reward,
+            best_run_result=best_run_results[0],
+            best_run_results=best_run_results,
             evaluations=tuple(evaluations),
         )
 
@@ -109,6 +132,14 @@ class TargetPositionPolicyTrainer:
         agent = ParameterizedTargetPositionAgent(engine.list_thrusters(), parameters=parameters)
         runner = SimulationAIRunner(engine, agent, reward_model=self._reward_model)
         return runner.run(objective, dt_seconds=dt_seconds)
+
+    def _evaluate_curriculum(
+        self,
+        parameters: TargetPolicyParameters,
+        objectives: tuple[TargetPositionObjective, ...],
+        dt_seconds: float | None,
+    ) -> tuple[AIRunResult, ...]:
+        return tuple(self._evaluate(parameters, objective, dt_seconds) for objective in objectives)
 
     def _build_candidates(self, parameters: TargetPolicyParameters) -> tuple[TargetPolicyParameters, ...]:
         candidates = {
@@ -155,3 +186,67 @@ PARAMETER_BOUNDS = {
     "approach_velocity_multiplier": (0.25, 3.0),
     "settle_velocity_multiplier": (0.25, 2.0),
 }
+
+
+def build_target_position_curriculum(
+    anchor_objective: TargetPositionObjective,
+    *,
+    count: int,
+    seed: int,
+    target_range_x: float,
+    target_range_y: float,
+    target_range_z: float,
+) -> TargetPositionCurriculum:
+    if count <= 0:
+        raise ValueError("count must be greater than zero")
+    if target_range_x < 0.0 or target_range_y < 0.0 or target_range_z < 0.0:
+        raise ValueError("target ranges must be zero or greater")
+
+    objectives = [anchor_objective]
+    if count == 1:
+        return TargetPositionCurriculum(
+            objectives=(anchor_objective,),
+            seed=seed,
+            target_ranges=(target_range_x, target_range_y, target_range_z),
+        )
+
+    generator = random.Random(seed)
+    seen_positions = {anchor_objective.target_position}
+    while len(objectives) < count:
+        candidate_position = (
+            generator.uniform(-target_range_x, target_range_x),
+            generator.uniform(-target_range_y, target_range_y),
+            generator.uniform(-target_range_z, target_range_z),
+        )
+        if candidate_position in seen_positions:
+            continue
+        seen_positions.add(candidate_position)
+        objectives.append(replace(anchor_objective, target_position=candidate_position))
+
+    return TargetPositionCurriculum(
+        objectives=tuple(objectives),
+        seed=seed,
+        target_ranges=(target_range_x, target_range_y, target_range_z),
+    )
+
+
+def _summarize_training_evaluation(
+    round_index: int,
+    parameters: TargetPolicyParameters,
+    run_results: tuple[AIRunResult, ...],
+) -> TrainingEvaluation:
+    total_reward = sum(run_result.total_reward for run_result in run_results)
+    success_count = sum(1 for run_result in run_results if run_result.success)
+    anchor_run_result = run_results[0]
+    curriculum_size = len(run_results)
+    return TrainingEvaluation(
+        round_index=round_index,
+        parameters=parameters,
+        total_reward=total_reward,
+        average_reward=total_reward / curriculum_size,
+        success=success_count == curriculum_size,
+        success_rate=success_count / curriculum_size,
+        stop_reason=anchor_run_result.stop_reason,
+        distance_to_target=anchor_run_result.distance_to_target,
+        curriculum_size=curriculum_size,
+    )

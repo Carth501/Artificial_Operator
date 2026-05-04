@@ -9,10 +9,14 @@ import unittest
 from main import main
 from simulation.ai import (
     SimulationAIRunner,
+    TargetPolicyMetadata,
     TargetPolicyParameters,
+    TargetPositionCurriculum,
     TargetPositionAgent,
     TargetPositionObjective,
     TargetPositionPolicyTrainer,
+    build_target_position_curriculum,
+    load_target_policy_metadata,
     load_target_policy_parameters,
     save_target_policy_parameters,
 )
@@ -130,7 +134,17 @@ class AIModeCliTests(unittest.TestCase):
     def test_main_ai_mode_loads_saved_policy_file(self) -> None:
         with TemporaryDirectory() as temp_dir:
             policy_path = Path(temp_dir) / "saved-policy.json"
-            save_target_policy_parameters(policy_path, TargetPolicyParameters())
+            save_target_policy_parameters(
+                policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(
+                    source="training",
+                    training_rounds=2,
+                    curriculum_size=3,
+                    curriculum_seed=17,
+                    best_average_reward=62.651,
+                ),
+            )
             output = StringIO()
 
             with redirect_stdout(output):
@@ -158,10 +172,37 @@ class AIModeCliTests(unittest.TestCase):
         stdout = output.getvalue()
         self.assertEqual(exit_code, 0)
         self.assertIn("policy_file=", stdout)
+        self.assertIn("curriculum_size=3", stdout)
+        self.assertIn("policy_avg_reward=62.651", stdout)
         self.assertIn("reason=target_reached", stdout)
 
 
 class TrainingModeTests(unittest.TestCase):
+    def test_build_target_position_curriculum_is_deterministic(self) -> None:
+        anchor = TargetPositionObjective(target_position=(5.0, 0.0, 0.0), tolerance=0.6, settle_velocity=0.6)
+
+        first = build_target_position_curriculum(
+            anchor,
+            count=3,
+            seed=17,
+            target_range_x=6.0,
+            target_range_y=4.0,
+            target_range_z=2.0,
+        )
+        second = build_target_position_curriculum(
+            anchor,
+            count=3,
+            seed=17,
+            target_range_x=6.0,
+            target_range_y=4.0,
+            target_range_z=2.0,
+        )
+
+        self.assertIsInstance(first, TargetPositionCurriculum)
+        self.assertEqual(first.objectives, second.objectives)
+        self.assertEqual(first.objectives[0], anchor)
+        self.assertEqual(len(first.objectives), 3)
+
     def test_policy_persistence_round_trip(self) -> None:
         parameters = TargetPolicyParameters(
             brake_distance_multiplier=1.25,
@@ -169,13 +210,27 @@ class TrainingModeTests(unittest.TestCase):
             approach_velocity_multiplier=0.75,
             settle_velocity_multiplier=1.5,
         )
+        metadata = TargetPolicyMetadata(
+            source="training",
+            training_rounds=3,
+            curriculum_size=4,
+            curriculum_seed=17,
+            anchor_target_position=(5.0, 0.0, 0.0),
+            target_ranges=(6.0, 4.0, 2.0),
+            best_total_reward=187.953,
+            best_average_reward=62.651,
+            success_rate=1.0,
+            anchor_stop_reason="target_reached",
+        )
 
         with TemporaryDirectory() as temp_dir:
             policy_path = Path(temp_dir) / "policy.json"
-            save_target_policy_parameters(policy_path, parameters)
+            save_target_policy_parameters(policy_path, parameters, metadata=metadata)
             loaded = load_target_policy_parameters(policy_path)
+            loaded_metadata = load_target_policy_metadata(policy_path)
 
         self.assertEqual(loaded, parameters)
+        self.assertEqual(loaded_metadata, metadata)
 
     def test_trainer_improves_reward_from_poor_initial_policy(self) -> None:
         trainer = TargetPositionPolicyTrainer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
@@ -202,6 +257,31 @@ class TrainingModeTests(unittest.TestCase):
         self.assertGreater(result.best_total_reward, result.evaluations[0].total_reward)
         self.assertTrue(result.best_run_result.success)
         self.assertEqual(result.best_run_result.stop_reason, "target_reached")
+
+    def test_trainer_curriculum_tracks_multiple_objectives(self) -> None:
+        trainer = TargetPositionPolicyTrainer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
+        anchor = TargetPositionObjective(
+            target_position=(5.0, 0.0, 0.0),
+            tolerance=0.6,
+            settle_velocity=0.6,
+            max_steps=80,
+        )
+        curriculum = build_target_position_curriculum(
+            anchor,
+            count=3,
+            seed=17,
+            target_range_x=6.0,
+            target_range_y=4.0,
+            target_range_z=2.0,
+        )
+
+        result = trainer.train_curriculum(curriculum.objectives, rounds=2, dt_seconds=0.5)
+
+        self.assertEqual(result.curriculum_size, 3)
+        self.assertEqual(len(result.best_run_results), 3)
+        self.assertAlmostEqual(result.best_average_reward, result.best_total_reward / 3)
+        self.assertEqual(result.evaluations[0].curriculum_size, 3)
+        self.assertGreaterEqual(result.evaluations[0].success_rate, 0.0)
 
     def test_main_training_mode_runs_headless(self) -> None:
         output = StringIO()
@@ -232,6 +312,45 @@ class TrainingModeTests(unittest.TestCase):
         self.assertIn("Training complete", stdout)
         self.assertIn("Best policy", stdout)
 
+    def test_main_training_mode_runs_curriculum(self) -> None:
+        output = StringIO()
+
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--mode",
+                    "train",
+                    "--target-x",
+                    "5",
+                    "--target-y",
+                    "0",
+                    "--target-z",
+                    "0",
+                    "--dt",
+                    "0.5",
+                    "--max-steps",
+                    "80",
+                    "--training-rounds",
+                    "2",
+                    "--curriculum-targets",
+                    "3",
+                    "--curriculum-seed",
+                    "17",
+                    "--target-range-x",
+                    "6",
+                    "--target-range-y",
+                    "4",
+                    "--target-range-z",
+                    "2",
+                ]
+            )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("curriculum_targets=3", stdout)
+        self.assertIn("success_rate=", stdout)
+        self.assertIn("best_avg_reward=", stdout)
+
     def test_main_training_mode_saves_policy_file(self) -> None:
         with TemporaryDirectory() as temp_dir:
             policy_path = Path(temp_dir) / "trained-policy.json"
@@ -253,7 +372,17 @@ class TrainingModeTests(unittest.TestCase):
                         "--max-steps",
                         "80",
                         "--training-rounds",
+                        "2",
+                        "--curriculum-targets",
                         "3",
+                        "--curriculum-seed",
+                        "17",
+                        "--target-range-x",
+                        "6",
+                        "--target-range-y",
+                        "4",
+                        "--target-range-z",
+                        "2",
                         "--save-policy",
                         str(policy_path),
                     ]
@@ -261,10 +390,25 @@ class TrainingModeTests(unittest.TestCase):
 
             self.assertTrue(policy_path.exists())
             saved_parameters = load_target_policy_parameters(policy_path)
+            saved_metadata = load_target_policy_metadata(policy_path)
 
         stdout = output.getvalue()
         self.assertEqual(exit_code, 0)
-        self.assertEqual(saved_parameters, TargetPolicyParameters())
+        self.assertEqual(
+            saved_parameters,
+            TargetPolicyParameters(
+                brake_distance_multiplier=1.0,
+                approach_distance_multiplier=3.125,
+                approach_velocity_multiplier=1.0,
+                settle_velocity_multiplier=1.0,
+            ),
+        )
+        self.assertIsNotNone(saved_metadata)
+        self.assertEqual(saved_metadata.curriculum_size, 3)
+        self.assertEqual(saved_metadata.curriculum_seed, 17)
+        self.assertEqual(saved_metadata.anchor_target_position, (5.0, 0.0, 0.0))
+        self.assertEqual(saved_metadata.target_ranges, (6.0, 4.0, 2.0))
+        self.assertEqual(saved_metadata.training_rounds, 2)
         self.assertIn("saved_policy=", stdout)
 
 

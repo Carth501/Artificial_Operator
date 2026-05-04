@@ -8,9 +8,13 @@ from simulation import SimulationEngine
 from simulation.ai import (
     ParameterizedTargetPositionAgent,
     SimulationAIRunner,
+    TargetPolicyMetadata,
     TargetPositionAgent,
+    TargetPositionCurriculum,
     TargetPositionObjective,
     TargetPositionPolicyTrainer,
+    build_target_position_curriculum,
+    load_target_policy_metadata,
     load_target_policy_parameters,
     save_target_policy_parameters,
 )
@@ -66,6 +70,36 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional destination path for saving the best trained policy in training mode.",
     )
+    parser.add_argument(
+        "--curriculum-targets",
+        type=int,
+        default=1,
+        help="Number of target positions to train across in training mode.",
+    )
+    parser.add_argument(
+        "--curriculum-seed",
+        type=int,
+        default=17,
+        help="Random seed used to generate additional curriculum targets in training mode.",
+    )
+    parser.add_argument(
+        "--target-range-x",
+        type=float,
+        default=None,
+        help="Optional absolute X range for generated curriculum targets.",
+    )
+    parser.add_argument(
+        "--target-range-y",
+        type=float,
+        default=None,
+        help="Optional absolute Y range for generated curriculum targets.",
+    )
+    parser.add_argument(
+        "--target-range-z",
+        type=float,
+        default=None,
+        help="Optional absolute Z range for generated curriculum targets.",
+    )
     return parser
 
 
@@ -85,8 +119,11 @@ def run_ai_mode(config_directory: Path, args: argparse.Namespace) -> int:
         agent = TargetPositionAgent(engine.list_thrusters())
     else:
         parameters = load_target_policy_parameters(args.policy_file)
+        metadata = load_target_policy_metadata(args.policy_file)
         agent = ParameterizedTargetPositionAgent(engine.list_thrusters(), parameters=parameters)
         policy_suffix = f"policy_file={args.policy_file}"
+        if metadata is not None:
+            policy_suffix = f"{policy_suffix} | {_format_policy_metadata(metadata)}"
     runner = SimulationAIRunner(engine, agent)
     objective = TargetPositionObjective(
         target_position=(args.target_x, args.target_y, args.target_z),
@@ -141,6 +178,7 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
         max_steps=args.max_steps,
         progress_interval=args.progress_every,
     )
+    curriculum = _build_training_curriculum(objective, args)
     trainer = TargetPositionPolicyTrainer(
         lambda: SimulationEngine.from_config_directory(config_directory),
     )
@@ -149,31 +187,40 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
         "Training mode objective | "
         f"target={_format_vector(objective.target_position)} | "
         f"rounds={args.training_rounds} | "
+        f"curriculum_targets={len(curriculum.objectives)} | "
+        f"curriculum_seed={curriculum.seed} | "
         f"tolerance={objective.tolerance:.2f} | "
         f"settle_velocity={objective.settle_velocity:.2f} | "
         f"max_steps={objective.max_steps} | "
         f"dt={step_seconds:.2f}"
     )
 
-    training_result = trainer.train(
-        objective,
+    training_result = trainer.train_curriculum(
+        curriculum.objectives,
         rounds=args.training_rounds,
         dt_seconds=args.dt,
         initial_parameters=initial_parameters,
     )
     best_run = training_result.best_run_result
+    curriculum_success_rate = _success_rate(training_result.best_run_results)
 
     saved_policy_suffix = ""
     if args.save_policy is not None:
-        save_target_policy_parameters(args.save_policy, training_result.best_parameters)
+        save_target_policy_parameters(
+            args.save_policy,
+            training_result.best_parameters,
+            metadata=_build_policy_metadata(objective, curriculum, training_result),
+        )
         saved_policy_suffix = f" | saved_policy={args.save_policy}"
 
     print(
         "Training complete | "
         f"rounds={training_result.training_rounds} | "
         f"evaluations={len(training_result.evaluations)} | "
-        f"best_reward={training_result.best_total_reward:.3f} | "
-        f"success={best_run.success} | "
+        f"best_total_reward={training_result.best_total_reward:.3f} | "
+        f"best_avg_reward={training_result.best_average_reward:.3f} | "
+        f"success_rate={curriculum_success_rate:.2f} | "
+        f"anchor_success={best_run.success} | "
         f"reason={best_run.stop_reason}"
         f"{saved_policy_suffix}"
     )
@@ -228,6 +275,12 @@ def _validate_ai_args(parser: argparse.ArgumentParser, args: argparse.Namespace)
         parser.error("--progress-every must be greater than zero.")
     if args.training_rounds <= 0:
         parser.error("--training-rounds must be greater than zero.")
+    if args.curriculum_targets <= 0:
+        parser.error("--curriculum-targets must be greater than zero.")
+    for field_name in ("target_range_x", "target_range_y", "target_range_z"):
+        field_value = getattr(args, field_name)
+        if field_value is not None and field_value < 0.0:
+            parser.error(f"--{field_name.replace('_', '-')} must be zero or greater when provided.")
     if args.dt is not None and args.dt <= 0.0:
         parser.error("--dt must be greater than zero when provided.")
 
@@ -249,6 +302,63 @@ def _print_ai_progress(step_index: int, observation: object, status: object) -> 
 
 def _format_vector(vector: Sequence[float]) -> str:
     return f"({vector[0]:.2f}, {vector[1]:.2f}, {vector[2]:.2f})"
+
+
+def _build_training_curriculum(
+    objective: TargetPositionObjective,
+    args: argparse.Namespace,
+) -> TargetPositionCurriculum:
+    return build_target_position_curriculum(
+        objective,
+        count=args.curriculum_targets,
+        seed=args.curriculum_seed,
+        target_range_x=_resolve_target_range(args.target_range_x, args.target_x),
+        target_range_y=_resolve_target_range(args.target_range_y, args.target_y),
+        target_range_z=_resolve_target_range(args.target_range_z, args.target_z),
+    )
+
+
+def _resolve_target_range(explicit_range: float | None, anchor_value: float) -> float:
+    if explicit_range is not None:
+        return explicit_range
+    return max(abs(anchor_value), 5.0)
+
+
+def _success_rate(run_results: Sequence[object]) -> float:
+    if not run_results:
+        return 0.0
+    success_count = sum(1 for run_result in run_results if bool(getattr(run_result, "success", False)))
+    return success_count / len(run_results)
+
+
+def _build_policy_metadata(
+    objective: TargetPositionObjective,
+    curriculum: TargetPositionCurriculum,
+    training_result: object,
+) -> TargetPolicyMetadata:
+    return TargetPolicyMetadata(
+        source="training",
+        training_rounds=int(getattr(training_result, "training_rounds")),
+        curriculum_size=int(getattr(training_result, "curriculum_size")),
+        curriculum_seed=curriculum.seed,
+        anchor_target_position=objective.target_position,
+        target_ranges=curriculum.target_ranges,
+        best_total_reward=float(getattr(training_result, "best_total_reward")),
+        best_average_reward=float(getattr(training_result, "best_average_reward")),
+        success_rate=_success_rate(getattr(training_result, "best_run_results")),
+        anchor_stop_reason=str(getattr(getattr(training_result, "best_run_result"), "stop_reason")),
+    )
+
+
+def _format_policy_metadata(metadata: TargetPolicyMetadata) -> str:
+    parts: list[str] = []
+    if metadata.curriculum_size is not None:
+        parts.append(f"curriculum_size={metadata.curriculum_size}")
+    if metadata.curriculum_seed is not None:
+        parts.append(f"curriculum_seed={metadata.curriculum_seed}")
+    if metadata.best_average_reward is not None:
+        parts.append(f"policy_avg_reward={metadata.best_average_reward:.3f}")
+    return " | ".join(parts)
 
 
 if __name__ == "__main__":
