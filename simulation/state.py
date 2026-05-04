@@ -22,6 +22,7 @@ class VariableDefinition:
 @dataclass(frozen=True)
 class SystemDefinition:
     system_id: str
+    module_id: str
     label: str
     kind: str
     variable_names: tuple[str, ...] = field(default_factory=tuple)
@@ -34,6 +35,7 @@ class ModuleDefinition:
     label: str
     initial_integrity: float = 100.0
     connections: tuple[str, ...] = field(default_factory=tuple)
+    systems_ids: tuple[str, ...] = field(default_factory=tuple)
     systems: tuple[SystemDefinition, ...] = field(default_factory=tuple)
 
 
@@ -70,11 +72,15 @@ def clamp_value(value: float, minimum: float | None, maximum: float | None) -> f
 def load_simulation_config(
     config_path: str | Path,
     modules_config_path: str | Path | None = None,
+    systems_config_path: str | Path | None = None,
 ) -> SimulationConfig:
     path = Path(config_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     definitions: dict[str, VariableDefinition] = {}
-    module_definitions = load_module_definitions(modules_config_path or path.with_name("modules.json"))
+    module_definitions = load_module_definitions(
+        modules_config_path or path.with_name("modules.json"),
+        systems_config_path or path.with_name("systems.json"),
+    )
 
     for raw_variable in payload["variables"]:
         definition = VariableDefinition(
@@ -100,74 +106,108 @@ def load_simulation_config(
     )
 
 
-def load_module_definitions(config_path: str | Path) -> dict[str, ModuleDefinition]:
-    path = Path(config_path)
+def load_module_definitions(
+    modules_config_path: str | Path,
+    systems_config_path: str | Path,
+) -> dict[str, ModuleDefinition]:
+    path = Path(modules_config_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    module_definitions: dict[str, ModuleDefinition] = {}
-    system_ids: set[str] = set()
+    module_metadata: dict[str, dict[str, Any]] = {}
+    system_definitions = load_system_definitions(systems_config_path)
+    assigned_system_ids: set[str] = set()
 
     for raw_module in payload.get("modules", []):
         module_id = raw_module["id"]
-        if module_id in module_definitions:
+        if module_id in module_metadata:
             raise ValueError(f"Duplicate module definition: {module_id}")
-
-        connections = _string_tuple(raw_module.get("connections", []))
-        systems: list[SystemDefinition] = []
-        for raw_system in raw_module.get("systems", []):
-            system_id = raw_system["id"]
-            if system_id in system_ids:
-                raise ValueError(f"Duplicate system definition: {system_id}")
-
-            kind = str(raw_system["kind"]).lower()
-            variable_names = _string_tuple(raw_system.get("variable_names", []))
-            action_ids = _string_tuple(raw_system.get("action_ids", []))
-
-            if kind == "container":
-                if not variable_names:
-                    raise ValueError(f"Container system requires variable_names: {system_id}")
-                if action_ids:
-                    raise ValueError(f"Container system cannot declare action_ids: {system_id}")
-            elif kind == "mechanism":
-                if not action_ids:
-                    raise ValueError(f"Mechanism system requires action_ids: {system_id}")
-                if variable_names:
-                    raise ValueError(f"Mechanism system cannot declare variable_names: {system_id}")
-            else:
-                raise ValueError(f"Unsupported system kind: {kind}")
-
-            systems.append(
-                SystemDefinition(
-                    system_id=system_id,
-                    label=raw_system.get("label", system_id),
-                    kind=kind,
-                    variable_names=variable_names,
-                    action_ids=action_ids,
-                )
-            )
-            system_ids.add(system_id)
 
         initial_integrity = float(raw_module.get("initial_integrity", 100.0))
         if initial_integrity < 0.0:
             raise ValueError(f"Module integrity cannot be negative: {module_id}")
 
-        module_definitions[module_id] = ModuleDefinition(
+        module_metadata[module_id] = {
+            "label": raw_module.get("label", module_id),
+            "initial_integrity": initial_integrity,
+            "connections": _string_tuple(raw_module.get("connections", [])),
+            "systems_ids": _string_tuple(raw_module.get("systems_ids", [])),
+        }
+
+    for module_id, metadata in module_metadata.items():
+        for connected_module_id in metadata["connections"]:
+            if connected_module_id == module_id:
+                raise ValueError(f"Module cannot connect to itself: {module_id}")
+            if connected_module_id not in module_metadata:
+                raise ValueError(f"Module references unknown connection: {module_id} -> {connected_module_id}")
+
+        for system_id in metadata["systems_ids"]:
+            if system_id not in system_definitions:
+                raise ValueError(f"Module references unknown system: {module_id} -> {system_id}")
+            if system_id in assigned_system_ids:
+                raise ValueError(f"System is owned by multiple modules: {system_id}")
+            assigned_system_ids.add(system_id)
+
+    unassigned_system_ids = set(system_definitions) - assigned_system_ids
+    if unassigned_system_ids:
+        names = ", ".join(sorted(unassigned_system_ids))
+        raise ValueError(f"Systems must belong to a module: {names}")
+
+    return {
+        module_id: ModuleDefinition(
             module_id=module_id,
-            label=raw_module.get("label", module_id),
-            initial_integrity=initial_integrity,
-            connections=connections,
-            systems=tuple(systems),
+            label=str(metadata["label"]),
+            initial_integrity=float(metadata["initial_integrity"]),
+            connections=tuple(str(connection) for connection in metadata["connections"]),
+            systems_ids=tuple(str(system_id) for system_id in metadata["systems_ids"]),
+            systems=tuple(
+                _with_module_id(system_definitions[system_id], module_id)
+                for system_id in metadata["systems_ids"]
+            ),
         )
+        for module_id, metadata in module_metadata.items()
+    }
 
-    for module in module_definitions.values():
-        for connected_module_id in module.connections:
-            if connected_module_id == module.module_id:
-                raise ValueError(f"Module cannot connect to itself: {module.module_id}")
-            if connected_module_id not in module_definitions:
-                raise ValueError(
-                    f"Module references unknown connection: {module.module_id} -> {connected_module_id}"
-                )
 
-    return module_definitions
+def load_system_definitions(
+    config_path: str | Path,
+ ) -> dict[str, SystemDefinition]:
+    path = Path(config_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    systems_by_id: dict[str, SystemDefinition] = {}
+    system_ids: set[str] = set()
+
+    for raw_system in payload.get("systems", []):
+        system_id = raw_system["id"]
+        if system_id in system_ids:
+            raise ValueError(f"Duplicate system definition: {system_id}")
+
+        kind = str(raw_system["kind"]).lower()
+        variable_names = _string_tuple(raw_system.get("variable_names", []))
+        action_ids = _string_tuple(raw_system.get("action_ids", []))
+
+        if kind == "container":
+            if not variable_names:
+                raise ValueError(f"Container system requires variable_names: {system_id}")
+            if action_ids:
+                raise ValueError(f"Container system cannot declare action_ids: {system_id}")
+        elif kind == "mechanism":
+            if not action_ids:
+                raise ValueError(f"Mechanism system requires action_ids: {system_id}")
+            if variable_names:
+                raise ValueError(f"Mechanism system cannot declare variable_names: {system_id}")
+        else:
+            raise ValueError(f"Unsupported system kind: {kind}")
+
+        systems_by_id[system_id] = SystemDefinition(
+            system_id=system_id,
+            module_id="",
+            label=raw_system.get("label", system_id),
+            kind=kind,
+            variable_names=variable_names,
+            action_ids=action_ids,
+        )
+        system_ids.add(system_id)
+
+    return systems_by_id
 
 
 def build_initial_state(simulation_config: SimulationConfig) -> SimulationState:
@@ -198,3 +238,14 @@ def _string_tuple(raw_values: Any) -> tuple[str, ...]:
     if len(set(values)) != len(values):
         raise ValueError(f"Duplicate values are not allowed: {values}")
     return values
+
+
+def _with_module_id(system: SystemDefinition, module_id: str) -> SystemDefinition:
+    return SystemDefinition(
+        system_id=system.system_id,
+        module_id=module_id,
+        label=system.label,
+        kind=system.kind,
+        variable_names=system.variable_names,
+        action_ids=system.action_ids,
+    )

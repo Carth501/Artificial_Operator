@@ -39,6 +39,7 @@ class SimulationEngine:
             config_root / "variables.json",
             config_root / "actions.json",
             config_root / "modules.json",
+            config_root / "systems.json",
         )
 
     @classmethod
@@ -47,8 +48,13 @@ class SimulationEngine:
         variables_config_path: str | Path,
         actions_config_path: str | Path,
         modules_config_path: str | Path | None = None,
+        systems_config_path: str | Path | None = None,
     ) -> "SimulationEngine":
-        simulation_config = load_simulation_config(variables_config_path, modules_config_path)
+        simulation_config = load_simulation_config(
+            variables_config_path,
+            modules_config_path,
+            systems_config_path,
+        )
         action_catalog = load_action_catalog(actions_config_path)
         return cls(simulation_config, action_catalog)
 
@@ -93,9 +99,11 @@ class SimulationEngine:
                 "label": module.label,
                 "initial_integrity": module.initial_integrity,
                 "connections": module.connections,
+                "systems_ids": module.systems_ids,
                 "systems": tuple(
                     {
                         "id": system.system_id,
+                        "module_id": system.module_id,
                         "label": system.label,
                         "kind": system.kind,
                         "variable_names": system.variable_names,
@@ -331,6 +339,7 @@ class SimulationEngine:
                 systems.append(
                     {
                         "id": system.system_id,
+                        "module_id": system.module_id,
                         "label": system.label,
                         "kind": system.kind,
                         "operational": operational,
@@ -347,6 +356,7 @@ class SimulationEngine:
                     "integrity": self._state.module_integrity[module.module_id],
                     "operational": operational,
                     "connections": module.connections,
+                    "systems_ids": module.systems_ids,
                     "systems": systems,
                     "variables": owned_variables,
                     "actions": owned_actions,

@@ -56,6 +56,7 @@ Artificial_Operator/
 |-- config/
 |   |-- actions.json
 |   |-- modules.json
+|   |-- systems.json
 |   `-- variables.json
 |-- simulation/
 |   |-- __init__.py
@@ -74,7 +75,7 @@ Artificial_Operator/
 
 ## Configuration
 
-The sandbox is driven by three JSON files.
+The sandbox is driven by four JSON files.
 
 ### `config/variables.json`
 
@@ -83,7 +84,7 @@ This file defines:
 - global simulation settings such as `tick_seconds` and `random_seed`
 - each variable's name, label, unit, initial value, bounds, display precision, and update profiles
 
-Variables that are not referenced by container systems in `config/modules.json` are treated as core ship state. The shipped config keeps `Mass`, `position_*`, and `velocity_*` outside modules.
+Variables that are not referenced by container systems in `config/systems.json` are treated as core ship state. The shipped config keeps `Mass`, `position_*`, and `velocity_*` outside modules.
 
 Each variable entry can include one or more profiles. The current built-in profile types are:
 
@@ -119,7 +120,7 @@ This file defines:
 - thruster actions, including axis, direction, and acceleration
 - conversion actions, including source and target variables plus amounts
 
-Every action must be referenced by a mechanism system in `config/modules.json` before it can operate.
+Every action must be referenced by a mechanism system in `config/systems.json` before it can operate.
 
 Example conversion definition:
 
@@ -139,11 +140,10 @@ Example conversion definition:
 This file defines:
 
 - modules, including their labels and initial integrity values
-- systems inside each module
-- whether a system is a `container` for variables or a `mechanism` for actions
-- which variables or actions each system owns
+- connections between modules on the module map
+- the `systems_ids` each module owns
 
-The shipped config includes a `resource_management` module for the Fuel, O2, N2, H2O, and CO2 container systems, plus the fuel conversion machine, and a `propulsion` module for the thruster system.
+The shipped config includes a `resource_management` module and a `propulsion` module, with a connection drawn between them.
 
 Example module definition:
 
@@ -152,20 +152,28 @@ Example module definition:
   "id": "resource_management",
   "label": "Resource Management",
   "initial_integrity": 100.0,
-  "systems": [
-    {
-      "id": "oxygen_tank",
-      "label": "Oxygen Tank",
-      "kind": "container",
-      "variable_names": ["O2"]
-    },
-    {
-      "id": "fuel_conversion_machine",
-      "label": "Fuel Conversion Machine",
-      "kind": "mechanism",
-      "action_ids": ["convert_h2o_to_fuel"]
-    }
-  ]
+  "connections": ["propulsion"],
+  "systems_ids": ["oxygen_tank", "fuel_conversion_machine"]
+}
+```
+
+### `config/systems.json`
+
+This file defines:
+
+- whether a system is a `container` for variables or a `mechanism` for actions
+- which variables or actions each system owns
+
+The shipped config includes the Fuel, O2, N2, H2O, and CO2 container systems plus the fuel conversion machine under `resource_management`, and the thruster system under `propulsion`.
+
+Example system definition:
+
+```json
+{
+  "id": "oxygen_tank",
+  "label": "Oxygen Tank",
+  "kind": "container",
+  "variable_names": ["O2"]
 }
 ```
 
@@ -186,7 +194,7 @@ This keeps the sandbox easy to tune and extend, but it is intentionally lightwei
 
 ### Add a new variable
 
-Add a new object to `config/variables.json` with a unique `name`, display metadata, and any profiles you want. If the variable represents a capacity or stored resource, also add it to a `container` system in `config/modules.json`. Core ship variables can remain unowned.
+Add a new object to `config/variables.json` with a unique `name`, display metadata, and any profiles you want. If the variable represents a capacity or stored resource, also add it to a `container` system in `config/systems.json`. Core ship variables can remain unowned.
 
 Example:
 
@@ -211,7 +219,7 @@ Example:
 
 ### Add a new action
 
-For additional thrusters or conversions, update `config/actions.json` and then assign the action ID to a `mechanism` system in `config/modules.json`. The existing UI renders actions from the module snapshot, so correctly owned actions appear automatically.
+For additional thrusters or conversions, update `config/actions.json` and then assign the action ID to a `mechanism` system in `config/systems.json`. The existing UI renders actions from the module snapshot, so correctly owned actions appear automatically.
 
 ### Add a new profile type
 

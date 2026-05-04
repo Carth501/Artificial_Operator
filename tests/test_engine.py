@@ -47,12 +47,24 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertEqual(snapshot["modules"][0]["number"], 1)
         self.assertEqual(snapshot["modules"][0]["id"], "resource_management")
         self.assertEqual(snapshot["modules"][0]["connections"], ("propulsion",))
+        self.assertEqual(
+            snapshot["modules"][0]["systems_ids"],
+            (
+                "fuel_tank",
+                "oxygen_tank",
+                "nitrogen_tank",
+                "water_tank",
+                "carbon_dioxide_tank",
+                "fuel_conversion_machine",
+            ),
+        )
         self.assertEqual(snapshot["modules"][1]["number"], 2)
         self.assertEqual(snapshot["modules"][1]["id"], "propulsion")
         self.assertEqual(snapshot["modules"][1]["connections"], ("resource_management",))
 
     def test_invalid_module_connection_fails_loading(self) -> None:
         modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
+        systems_payload = json.loads((CONFIG_ROOT / "systems.json").read_text(encoding="utf-8"))
         modules_payload["modules"][0]["connections"] = ["missing_module"]
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -60,12 +72,33 @@ class SimulationEngineTests(unittest.TestCase):
             variables_path = temp_root / "variables.json"
             actions_path = temp_root / "actions.json"
             modules_path = temp_root / "modules.json"
+            systems_path = temp_root / "systems.json"
             variables_path.write_text((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"), encoding="utf-8")
             actions_path.write_text((CONFIG_ROOT / "actions.json").read_text(encoding="utf-8"), encoding="utf-8")
             modules_path.write_text(json.dumps(modules_payload), encoding="utf-8")
+            systems_path.write_text(json.dumps(systems_payload), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "unknown connection"):
-                SimulationEngine.from_paths(variables_path, actions_path, modules_path)
+                SimulationEngine.from_paths(variables_path, actions_path, modules_path, systems_path)
+
+    def test_invalid_module_system_reference_fails_loading(self) -> None:
+        modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
+        systems_payload = json.loads((CONFIG_ROOT / "systems.json").read_text(encoding="utf-8"))
+        modules_payload["modules"][0]["systems_ids"].append("missing_system")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            variables_path = temp_root / "variables.json"
+            actions_path = temp_root / "actions.json"
+            modules_path = temp_root / "modules.json"
+            systems_path = temp_root / "systems.json"
+            variables_path.write_text((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"), encoding="utf-8")
+            actions_path.write_text((CONFIG_ROOT / "actions.json").read_text(encoding="utf-8"), encoding="utf-8")
+            modules_path.write_text(json.dumps(modules_payload), encoding="utf-8")
+            systems_path.write_text(json.dumps(systems_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unknown system"):
+                SimulationEngine.from_paths(variables_path, actions_path, modules_path, systems_path)
 
     def test_failed_resource_module_drains_containers_and_blocks_conversion(self) -> None:
         self.engine.set_module_integrity("resource_management", 0.0)
@@ -99,6 +132,7 @@ class SimulationEngineTests(unittest.TestCase):
     def test_engine_accepts_new_variable_from_config(self) -> None:
         variables_payload = json.loads((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"))
         modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
+        systems_payload = json.loads((CONFIG_ROOT / "systems.json").read_text(encoding="utf-8"))
         variables_payload["variables"].append(
             {
                 "name": "Power",
@@ -117,7 +151,7 @@ class SimulationEngineTests(unittest.TestCase):
                 ]
             }
         )
-        modules_payload["modules"][0]["systems"].append(
+        systems_payload["systems"].append(
             {
                 "id": "power_cell",
                 "label": "Power Cell",
@@ -125,17 +159,20 @@ class SimulationEngineTests(unittest.TestCase):
                 "variable_names": ["Power"],
             }
         )
+        modules_payload["modules"][0]["systems_ids"].append("power_cell")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             variables_path = temp_root / "variables.json"
             actions_path = temp_root / "actions.json"
             modules_path = temp_root / "modules.json"
+            systems_path = temp_root / "systems.json"
             variables_path.write_text(json.dumps(variables_payload), encoding="utf-8")
             actions_path.write_text((CONFIG_ROOT / "actions.json").read_text(encoding="utf-8"), encoding="utf-8")
             modules_path.write_text(json.dumps(modules_payload), encoding="utf-8")
+            systems_path.write_text(json.dumps(systems_payload), encoding="utf-8")
 
-            engine = SimulationEngine.from_paths(variables_path, actions_path, modules_path)
+            engine = SimulationEngine.from_paths(variables_path, actions_path, modules_path, systems_path)
             engine.step(4.0)
             snapshot = engine.snapshot()
 

@@ -1,0 +1,65 @@
+{
+	"systems": [
+		{
+			"id": "fuel_tank",
+			"label": "Fuel Tank",
+			"kind": "container",
+			"variable_names": [
+				"Fuel"
+			]
+		},
+		{
+			"id": "oxygen_tank",
+			"label": "Oxygen Tank",
+			"kind": "container",
+			"variable_names": [
+				"O2"
+			]
+		},
+		{
+			"id": "nitrogen_tank",
+			"label": "Nitrogen Tank",
+			"kind": "container",
+			"variable_names": [
+				"N2"
+			]
+		},
+		{
+			"id": "water_tank",
+			"label": "Water Tank",
+			"kind": "container",
+			"variable_names": [
+				"H2O"
+			]
+		},
+		{
+			"id": "carbon_dioxide_tank",
+			"label": "Carbon Dioxide Tank",
+			"kind": "container",
+			"variable_names": [
+				"CO2"
+			]
+		},
+		{
+			"id": "fuel_conversion_machine",
+			"label": "Fuel Conversion Machine",
+			"kind": "mechanism",
+			"action_ids": [
+				"convert_h2o_to_fuel"
+			]
+		},
+		{
+			"id": "thruster_array",
+			"label": "Thruster Array",
+			"kind": "mechanism",
+			"action_ids": [
+				"thruster_x_positive",
+				"thruster_x_negative",
+				"thruster_y_positive",
+				"thruster_y_negative",
+				"thruster_z_positive",
+				"thruster_z_negative"
+			]
+		}
+	]
+}
