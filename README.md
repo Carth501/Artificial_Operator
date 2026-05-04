@@ -14,6 +14,7 @@ Artificial Operator is a Python sandbox for simulating a small spaceship with co
 - Resource containers and action mechanisms live inside modules with integrity values.
 - A module that reaches 0 integrity fails all of its systems, disables its mechanisms, and drains its containers.
 - The UI includes live module displays, hold-to-fire thruster buttons, H2O-to-H2 conversion, pause, and reset controls.
+- A headless AI mode can drive the thrusters toward a target X/Y/Z position through a modular agent runner.
 - New variables and actions can be added through configuration as long as they are assigned to systems in a module.
 
 ## Requirements
@@ -33,10 +34,26 @@ python main.py
 
 If your system has multiple Python installations, use the Python 3 interpreter you want for the app.
 
+## Run AI Mode
+
+Use the shared main entry point with `--mode ai`:
+
+```bash
+python main.py --mode ai --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80
+```
+
+Or use the dedicated AI entry point:
+
+```bash
+python ai_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80
+```
+
+Both commands run the same modular AI runner. The current shipped agent is a deterministic target-seeking autopilot that tries to settle within the configured tolerance and velocity threshold.
+
 ## Run Tests
 
 ```bash
-python -m unittest tests.test_profiles tests.test_engine
+python -m unittest tests.test_profiles tests.test_engine tests.test_ai
 ```
 
 ## Controls
@@ -52,6 +69,7 @@ python -m unittest tests.test_profiles tests.test_engine
 ```text
 Artificial_Operator/
 |-- main.py
+|-- ai_main.py
 |-- README.md
 |-- config/
 |   |-- actions.json
@@ -61,10 +79,16 @@ Artificial_Operator/
 |-- simulation/
 |   |-- __init__.py
 |   |-- actions.py
+|   |-- ai/
+|   |   |-- __init__.py
+|   |   |-- agents.py
+|   |   |-- models.py
+|   |   `-- runner.py
 |   |-- engine.py
 |   |-- profiles.py
 |   `-- state.py
 |-- tests/
+|   |-- test_ai.py
 |   |-- test_engine.py
 |   `-- test_profiles.py
 `-- ui/
@@ -229,6 +253,10 @@ Example:
 For additional thrusters or conversions, update `config/actions.json` and then assign the action ID to a `mechanism` system in `config/systems.json`. The existing UI renders actions from the module snapshot, so correctly owned actions appear automatically.
 
 Mechanism systems can also declare `power_draw_per_second`. Power-producing mechanisms such as the shipped solar panels can add `power_generation_per_second` and `generated_variable`.
+
+### Add a new AI behavior
+
+Add a new agent under `simulation/ai/` that implements the same `select_actions(observation, objective)` contract as the shipped target-position agent. The `SimulationAIRunner` can then run that agent through the same engine and objective loop without changing the CLI surface.
 
 ### Add a new profile type
 
