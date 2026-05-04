@@ -21,6 +21,8 @@ class SimulationApp:
         self._tick_job: str | None = None
         self._group_panels: dict[str, VariableGroupPanel] = {}
         self._module_panels: dict[str, ModulePanel] = {}
+        self._scroll_canvas: tk.Canvas | None = None
+        self._scroll_window: int | None = None
 
         self._configure_style()
         initial_snapshot = self._engine.snapshot()
@@ -81,8 +83,28 @@ class SimulationApp:
         )
 
     def _build_layout(self, snapshot: dict[str, object]) -> None:
-        shell = ttk.Frame(self.root, padding=20, style="App.TFrame")
-        shell.pack(fill="both", expand=True)
+        viewport = ttk.Frame(self.root, style="App.TFrame")
+        viewport.pack(fill="both", expand=True)
+        viewport.columnconfigure(0, weight=1)
+        viewport.rowconfigure(0, weight=1)
+
+        self._scroll_canvas = tk.Canvas(
+            viewport,
+            background=APP_BACKGROUND,
+            highlightthickness=0,
+            bd=0,
+        )
+        scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=self._scroll_canvas.yview)
+        self._scroll_canvas.configure(yscrollcommand=scrollbar.set)
+        self._scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        shell = ttk.Frame(self._scroll_canvas, padding=20, style="App.TFrame")
+        self._scroll_window = self._scroll_canvas.create_window((0, 0), window=shell, anchor="nw")
+        shell.bind("<Configure>", self._on_shell_configure)
+        self._scroll_canvas.bind("<Configure>", self._on_canvas_configure)
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+
         shell.columnconfigure(0, weight=3)
         shell.columnconfigure(1, weight=2)
         shell.rowconfigure(1, weight=1)
@@ -127,6 +149,21 @@ class SimulationApp:
         modules = snapshot.get("modules", ())
         if isinstance(modules, (list, tuple)):
             self._render_modules(modules)
+
+    def _on_shell_configure(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._scroll_canvas is None:
+            return
+        self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event[tk.Misc]) -> None:
+        if self._scroll_canvas is None or self._scroll_window is None:
+            return
+        self._scroll_canvas.itemconfigure(self._scroll_window, width=event.width)
+
+    def _on_mousewheel(self, event: tk.Event[tk.Misc]) -> None:
+        if self._scroll_canvas is None:
+            return
+        self._scroll_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def refresh(self, snapshot: dict[str, object]) -> None:
         modules = snapshot.get("modules", ())
@@ -246,4 +283,5 @@ class SimulationApp:
         if self._tick_job is not None:
             self.root.after_cancel(self._tick_job)
             self._tick_job = None
+        self.root.unbind_all("<MouseWheel>")
         self.root.destroy()
