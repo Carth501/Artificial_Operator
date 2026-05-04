@@ -231,6 +231,7 @@ class ModulePanel(ttk.LabelFrame):
         self._thruster_buttons: dict[str, tk.Button] = {}
         self._conversion_buttons: dict[str, ttk.Button] = {}
         self._system_status_vars: dict[str, tk.StringVar] = {}
+        self._system_detail_vars: dict[str, tk.StringVar] = {}
         self._variable_rows: dict[str, VariableRow] = {}
         self._integrity_var = tk.StringVar(value="Integrity 0.0")
         self._status_var = tk.StringVar(value="Unknown")
@@ -286,6 +287,17 @@ class ModulePanel(ttk.LabelFrame):
             ttk.Label(header, textvariable=status_var, style="AxisLabel.TLabel").grid(row=0, column=1, sticky="e")
 
             content_row = 1
+            if system.get("kind") == "mechanism":
+                detail_var = tk.StringVar(value="")
+                self._system_detail_vars[system_id] = detail_var
+                ttk.Label(section, textvariable=detail_var, style="MetricUnit.TLabel").grid(
+                    row=content_row,
+                    column=0,
+                    sticky="w",
+                    pady=(0, 8),
+                )
+                content_row += 1
+
             variables = system.get("variables", [])
             if isinstance(variables, list):
                 for variable in variables:
@@ -343,7 +355,7 @@ class ModulePanel(ttk.LabelFrame):
         integrity = float(module.get("integrity", 0.0))
         operational = bool(module.get("operational", False))
         self._integrity_var.set(f"Integrity {integrity:5.1f}")
-        self._status_var.set("Operational" if operational else "Failed")
+        self._status_var.set(str(module.get("status", "Operational" if operational else "Failed")))
         self._integrity_bar.configure(value=max(0.0, min(100.0, integrity)))
 
         systems = module.get("systems", [])
@@ -354,7 +366,17 @@ class ModulePanel(ttk.LabelFrame):
             system_id = str(system["id"])
             status_var = self._system_status_vars.get(system_id)
             if status_var is not None:
-                status_var.set("Operational" if system.get("operational", False) else "Failed")
+                status_var.set(str(system.get("status", "Operational" if system.get("operational", False) else "Failed")))
+
+            detail_var = self._system_detail_vars.get(system_id)
+            if detail_var is not None:
+                power_draw = float(system.get("power_draw_per_second", 0.0))
+                power_generation = float(system.get("power_generation_per_second", 0.0))
+                generated_variable = system.get("generated_variable")
+                detail = f"Draw {power_draw:.2f}/s"
+                if power_generation > 0.0 and generated_variable:
+                    detail = f"{detail} | Generate {power_generation:.2f}/s to {generated_variable}"
+                detail_var.set(detail)
 
             variables = system.get("variables", [])
             if isinstance(variables, list):

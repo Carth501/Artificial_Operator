@@ -5,15 +5,28 @@
 			"label": "Resource Management",
 			"initial_integrity": 100.0,
 			"connections": [
-				"propulsion"
+				"propulsion",
+				"solar_generation"
 			],
 			"systems_ids": [
+				"battery_bank",
 				"fuel_tank",
 				"oxygen_tank",
 				"nitrogen_tank",
 				"water_tank",
 				"carbon_dioxide_tank",
 				"fuel_conversion_machine"
+			]
+		},
+		{
+			"id": "solar_generation",
+			"label": "Solar Generation",
+			"initial_integrity": 100.0,
+			"connections": [
+				"resource_management"
+			],
+			"systems_ids": [
+				"solar_panels"
 			]
 		},
 		{

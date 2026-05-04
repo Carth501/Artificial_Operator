@@ -65,6 +65,17 @@
 			]
 		},
 		{
+			"name": "electricity",
+			"label": "Electricity",
+			"group": "resource",
+			"unit": "kWh",
+			"initial": 20.0,
+			"minimum": 0.0,
+			"maximum": 100.0,
+			"precision": 2,
+			"profiles": []
+		},
+		{
 			"name": "CO2",
 			"label": "CO2",
 			"group": "resource",

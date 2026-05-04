@@ -152,8 +152,8 @@ Example module definition:
   "id": "resource_management",
   "label": "Resource Management",
   "initial_integrity": 100.0,
-  "connections": ["propulsion"],
-  "systems_ids": ["oxygen_tank", "fuel_conversion_machine"]
+  "connections": ["propulsion", "solar_generation"],
+  "systems_ids": ["battery_bank", "oxygen_tank", "fuel_conversion_machine"]
 }
 ```
 
@@ -163,8 +163,9 @@ This file defines:
 
 - whether a system is a `container` for variables or a `mechanism` for actions
 - which variables or actions each system owns
+- optional mechanism power draw and power generation behavior
 
-The shipped config includes the Fuel, O2, N2, H2O, and CO2 container systems plus the fuel conversion machine under `resource_management`, and the thruster system under `propulsion`.
+The shipped config includes the Fuel, O2, N2, H2O, CO2, and electricity container systems under `resource_management`, the solar panel mechanism under `solar_generation`, and the thruster system under `propulsion`.
 
 Example system definition:
 
@@ -181,12 +182,16 @@ Example system definition:
 
 The engine uses a fixed real-time tick and simple Euler integration:
 
-1. Apply profile-driven changes for variables whose container systems are still operational.
-2. Apply any active thruster accelerations whose mechanism systems are still operational and have fuel available.
-3. Integrate velocity into position.
-4. Advance mission time.
+1. Evaluate connected operational modules for power generation and mechanism draw.
+2. Raise an `Insufficient power` alert if connected modules do not have enough electricity to run their mechanism systems.
+3. Apply profile-driven changes for variables whose container systems are still operational.
+4. Apply any active thruster accelerations whose mechanism systems are still operational and have fuel available.
+5. Integrate velocity into position.
+6. Advance mission time.
 
 If a module's integrity reaches 0, all of its systems fail immediately. Failed mechanism systems cannot operate, and failed container systems are drained to 0 and reject further writes until integrity is restored.
+
+Electricity is stored in the resource management battery bank. The solar generation module feeds that electricity into connected operational modules, and a broken module does not pass electricity across its connections.
 
 This keeps the sandbox easy to tune and extend, but it is intentionally lightweight. It does not yet use mass in thrust calculations, and it does not yet model pressure, collisions, orbital mechanics, or persistence.
 
@@ -221,6 +226,8 @@ Example:
 
 For additional thrusters or conversions, update `config/actions.json` and then assign the action ID to a `mechanism` system in `config/systems.json`. The existing UI renders actions from the module snapshot, so correctly owned actions appear automatically.
 
+Mechanism systems can also declare `power_draw_per_second`. Power-producing mechanisms such as the shipped solar panels can add `power_generation_per_second` and `generated_variable`.
+
 ### Add a new profile type
 
 If you need behavior beyond `constant`, `action_rate`, or `stochastic`, add a new evaluator in `simulation/profiles.py` and reference it from variable profiles in `config/variables.json`.
@@ -230,6 +237,7 @@ If you need behavior beyond `constant`, `action_rate`, or `stochastic`, add a ne
 - The simulation seed is fixed by default so stochastic behavior is repeatable unless you change `random_seed`.
 - Position and velocity are represented as named variables such as `position_x` and `velocity_z`, which keeps the state model generic.
 - Module integrity is runtime state and resets back to the configured `initial_integrity` values.
+- Mechanism systems only stay powered when their connected operational modules have enough electricity for the whole connected power network.
 - N2 is currently neutral by design; you can later give it leakage, balancing, or venting behavior through configuration or a new profile type.
 
 ## Next Useful Improvements

@@ -33,6 +33,12 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 3.0)
         self.assertAlmostEqual(snapshot["variables"]["position_x"]["value"], 6.0)
 
+    def test_solar_module_charges_electricity(self) -> None:
+        self.engine.step(1.0)
+        snapshot = self.engine.snapshot()
+
+        self.assertAlmostEqual(snapshot["variables"]["electricity"]["value"], 20.4)
+
     def test_conversion_moves_h2o_into_fuel(self) -> None:
         applied = self.engine.trigger_conversion("convert_h2o_to_fuel")
         snapshot = self.engine.snapshot()
@@ -46,10 +52,11 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertEqual(snapshot["modules"][0]["number"], 1)
         self.assertEqual(snapshot["modules"][0]["id"], "resource_management")
-        self.assertEqual(snapshot["modules"][0]["connections"], ("propulsion",))
+        self.assertEqual(snapshot["modules"][0]["connections"], ("propulsion", "solar_generation"))
         self.assertEqual(
             snapshot["modules"][0]["systems_ids"],
             (
+                "battery_bank",
                 "fuel_tank",
                 "oxygen_tank",
                 "nitrogen_tank",
@@ -59,8 +66,12 @@ class SimulationEngineTests(unittest.TestCase):
             ),
         )
         self.assertEqual(snapshot["modules"][1]["number"], 2)
-        self.assertEqual(snapshot["modules"][1]["id"], "propulsion")
+        self.assertEqual(snapshot["modules"][1]["id"], "solar_generation")
         self.assertEqual(snapshot["modules"][1]["connections"], ("resource_management",))
+        self.assertEqual(snapshot["modules"][1]["systems_ids"], ("solar_panels",))
+        self.assertEqual(snapshot["modules"][2]["number"], 3)
+        self.assertEqual(snapshot["modules"][2]["id"], "propulsion")
+        self.assertEqual(snapshot["modules"][2]["connections"], ("resource_management",))
 
     def test_invalid_module_connection_fails_loading(self) -> None:
         modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
@@ -108,7 +119,23 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertFalse(snapshot["modules"][0]["operational"])
         self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 0.0)
         self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["electricity"]["value"], 0.0)
         self.assertFalse(self.engine.trigger_conversion("convert_h2o_to_fuel"))
+
+    def test_broken_solar_module_stops_power_feed_and_raises_alert(self) -> None:
+        self.engine.set_module_integrity("solar_generation", 0.0)
+        self.engine._state.values["electricity"] = 0.0
+        self.engine.start_action("thruster_x_positive")
+        snapshot = self.engine.step(1.0)
+
+        self.assertIn("Insufficient power", snapshot["alerts"])
+        self.assertEqual(snapshot["active_actions"], ())
+        self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 0.0)
+
+        resource_module = next(module for module in snapshot["modules"] if module["id"] == "resource_management")
+        propulsion_module = next(module for module in snapshot["modules"] if module["id"] == "propulsion")
+        self.assertTrue(resource_module["insufficient_power"])
+        self.assertTrue(propulsion_module["insufficient_power"])
 
     def test_failed_propulsion_module_blocks_thrusters(self) -> None:
         self.engine.set_module_integrity("propulsion", 0.0)

@@ -153,14 +153,16 @@ class SimulationApp:
         self._control_panel.set_paused(paused)
         elapsed_seconds = float(snapshot.get("elapsed_seconds", 0.0))
         state_label = "Paused" if paused else "Running"
+        alerts = snapshot.get("alerts", ())
         failed_modules = 0
         module_count = 0
         if isinstance(modules, (list, tuple)):
             module_count = len(modules)
             failed_modules = sum(1 for module in modules if not bool(module.get("operational", False)))
-        self._status_var.set(
-            f"Mission time {elapsed_seconds:6.1f}s | {state_label} | Modules {module_count} total, {failed_modules} failed | {status_suffix}"
-        )
+        status_text = f"Mission time {elapsed_seconds:6.1f}s | {state_label} | Modules {module_count} total, {failed_modules} failed | {status_suffix}"
+        if isinstance(alerts, tuple) and alerts:
+            status_text = f"{status_text} | ALERT: {', '.join(alerts)}"
+        self._status_var.set(status_text)
 
     def _render_variable_groups(self, groups: dict[str, object]) -> None:
         panel_row = 0

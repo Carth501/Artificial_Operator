@@ -27,6 +27,9 @@ class SystemDefinition:
     kind: str
     variable_names: tuple[str, ...] = field(default_factory=tuple)
     action_ids: tuple[str, ...] = field(default_factory=tuple)
+    power_draw_per_second: float = 0.0
+    power_generation_per_second: float = 0.0
+    generated_variable: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,17 +186,33 @@ def load_system_definitions(
         kind = str(raw_system["kind"]).lower()
         variable_names = _string_tuple(raw_system.get("variable_names", []))
         action_ids = _string_tuple(raw_system.get("action_ids", []))
+        power_draw_per_second = float(raw_system.get("power_draw_per_second", 0.0))
+        power_generation_per_second = float(raw_system.get("power_generation_per_second", 0.0))
+        generated_variable = raw_system.get("generated_variable")
+        if generated_variable is not None:
+            generated_variable = str(generated_variable)
+
+        if power_draw_per_second < 0.0:
+            raise ValueError(f"System power draw cannot be negative: {system_id}")
+        if power_generation_per_second < 0.0:
+            raise ValueError(f"System power generation cannot be negative: {system_id}")
 
         if kind == "container":
             if not variable_names:
                 raise ValueError(f"Container system requires variable_names: {system_id}")
             if action_ids:
                 raise ValueError(f"Container system cannot declare action_ids: {system_id}")
+            if power_draw_per_second > 0.0 or power_generation_per_second > 0.0 or generated_variable is not None:
+                raise ValueError(f"Container system cannot declare power behavior: {system_id}")
         elif kind == "mechanism":
-            if not action_ids:
-                raise ValueError(f"Mechanism system requires action_ids: {system_id}")
             if variable_names:
                 raise ValueError(f"Mechanism system cannot declare variable_names: {system_id}")
+            if not action_ids and power_generation_per_second <= 0.0:
+                raise ValueError(f"Mechanism system requires action_ids or power generation: {system_id}")
+            if power_generation_per_second > 0.0 and generated_variable is None:
+                raise ValueError(f"Power-generating mechanism requires generated_variable: {system_id}")
+            if power_generation_per_second <= 0.0 and generated_variable is not None:
+                raise ValueError(f"generated_variable requires positive power generation: {system_id}")
         else:
             raise ValueError(f"Unsupported system kind: {kind}")
 
@@ -204,6 +223,9 @@ def load_system_definitions(
             kind=kind,
             variable_names=variable_names,
             action_ids=action_ids,
+            power_draw_per_second=power_draw_per_second,
+            power_generation_per_second=power_generation_per_second,
+            generated_variable=generated_variable,
         )
         system_ids.add(system_id)
 
@@ -248,4 +270,7 @@ def _with_module_id(system: SystemDefinition, module_id: str) -> SystemDefinitio
         kind=system.kind,
         variable_names=system.variable_names,
         action_ids=system.action_ids,
+        power_draw_per_second=system.power_draw_per_second,
+        power_generation_per_second=system.power_generation_per_second,
+        generated_variable=system.generated_variable,
     )
