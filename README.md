@@ -14,6 +14,7 @@ Artificial Operator is a Python sandbox for simulating a small spaceship with co
 - Resource containers and action mechanisms live inside modules with integrity values.
 - A module that reaches 0 integrity fails all of its systems, disables its mechanisms, and drains its containers.
 - The UI includes live module displays, hold-to-fire thruster buttons, H2O-to-H2 conversion, pause, and reset controls.
+- The UI now includes an AI flight panel that can train a lightweight controller toward a user-selected x/y/z target and then hand flight over to the learned policy.
 - New variables and actions can be added through configuration as long as they are assigned to systems in a module.
 
 ## Requirements
@@ -36,7 +37,7 @@ If your system has multiple Python installations, use the Python 3 interpreter y
 ## Run Tests
 
 ```bash
-python -m unittest tests.test_profiles tests.test_engine
+python -m unittest tests.test_profiles tests.test_engine tests.test_learning
 ```
 
 ## Controls
@@ -46,6 +47,9 @@ python -m unittest tests.test_profiles tests.test_engine
 - Click `Convert H2O to H2` to spend water and generate hydrogen.
 - Click `Pause Simulation` to freeze time updates.
 - Click `Reset State` to restore the initial config-defined state.
+- Enter a target in the `AI Flight` panel and click `Train` to let the learner improve against that coordinate without blocking the UI.
+- Click `Run AI` to let the learned controller command the thrusters; manual thruster buttons are disabled while AI control is active.
+- Click `Stop` in the `AI Flight` panel to stop training or return control to manual flight.
 
 ## Project Layout
 
@@ -66,6 +70,7 @@ Artificial_Operator/
 |   `-- state.py
 |-- tests/
 |   |-- test_engine.py
+|   |-- test_learning.py
 |   `-- test_profiles.py
 `-- ui/
     |-- __init__.py
@@ -196,6 +201,17 @@ If a module's integrity reaches 0, all of its systems fail immediately. Failed m
 Electricity is stored in the resource management battery bank. The solar generation module feeds that electricity into connected operational modules, and a broken module does not pass electricity across its connections.
 
 This keeps the sandbox easy to tune and extend, but it is intentionally lightweight. It does not yet use mass in thrust calculations, and it does not yet model pressure, collisions, orbital mechanics, or persistence.
+
+## AI Flight Mode
+
+The AI flight mode is a target-specific learner built with the Python standard library. It does not use external ML frameworks or store model files.
+
+- The learner trains against fresh cloned simulation runs, so training does not mutate the live ship state.
+- The current policy learns a compact controller that chooses one thruster at a time from the current position and velocity error relative to the selected target.
+- Training still respects the existing H2, O2, electricity, and module-integrity rules enforced by the simulation engine.
+- `Run AI` uses the best learned policy found so far to fly the live ship toward the selected coordinate.
+
+This first version is intentionally narrow: it is designed to visibly learn a path to one chosen target rather than provide a fully general navigation system.
 
 ## Extending The Sandbox
 

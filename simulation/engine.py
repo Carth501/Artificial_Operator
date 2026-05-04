@@ -62,6 +62,9 @@ class SimulationEngine:
     def tick_seconds(self) -> float:
         return self._simulation_config.tick_seconds
 
+    def clone(self) -> "SimulationEngine":
+        return SimulationEngine(self._simulation_config, self._action_catalog)
+
     @property
     def active_actions(self) -> tuple[str, ...]:
         power_context = self._evaluate_power_network(self.tick_seconds)
@@ -125,6 +128,14 @@ class SimulationEngine:
         power_context = self._evaluate_power_network(self.tick_seconds)
         if action_id in self._action_catalog.thrusters and self._action_is_operational(action_id, power_context):
             self._active_actions.add(action_id)
+
+    def set_active_thrusters(self, action_ids: set[str] | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        self._active_actions = {
+            action_id
+            for action_id in action_ids
+            if action_id in self._action_catalog.thrusters
+        }
+        return tuple(sorted(self._active_actions))
 
     def stop_action(self, action_id: str) -> None:
         self._active_actions.discard(action_id)

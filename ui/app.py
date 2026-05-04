@@ -4,13 +4,15 @@ import tkinter as tk
 from tkinter import ttk
 
 from simulation.engine import SimulationEngine
+from simulation.learning import TargetNavigationLearner
 
-from .panels import APP_BACKGROUND, ControlPanel, ModuleMapPanel, ModulePanel, MotionPanel, VariableGroupPanel
+from .panels import AIPanel, APP_BACKGROUND, ControlPanel, ModuleMapPanel, ModulePanel, MotionPanel, VariableGroupPanel
 
 
 class SimulationApp:
     def __init__(self, engine: SimulationEngine) -> None:
         self._engine = engine
+        self._learner = TargetNavigationLearner(engine)
         self.root = tk.Tk()
         self.root.title("Artificial Operator Sandbox")
         self.root.geometry("1180x760")
@@ -23,6 +25,8 @@ class SimulationApp:
         self._module_panels: dict[str, ModulePanel] = {}
         self._scroll_canvas: tk.Canvas | None = None
         self._scroll_window: int | None = None
+        self._ai_training_active = False
+        self._ai_control_active = False
 
         self._configure_style()
         initial_snapshot = self._engine.snapshot()
@@ -135,8 +139,16 @@ class SimulationApp:
         self._motion_panel = MotionPanel(right_column)
         self._motion_panel.grid(row=1, column=0, sticky="new", pady=(16, 0))
 
+        self._ai_panel = AIPanel(
+            right_column,
+            on_train=self._handle_ai_train,
+            on_run=self._handle_ai_run,
+            on_stop=self._handle_ai_stop,
+        )
+        self._ai_panel.grid(row=2, column=0, sticky="new", pady=(16, 0))
+
         self._core_column = ttk.Frame(right_column, style="App.TFrame")
-        self._core_column.grid(row=2, column=0, sticky="new", pady=(16, 0))
+        self._core_column.grid(row=3, column=0, sticky="new", pady=(16, 0))
         self._core_column.columnconfigure(0, weight=1)
 
         self._control_panel = ControlPanel(
@@ -144,7 +156,7 @@ class SimulationApp:
             on_pause=self._handle_pause,
             on_reset=self._handle_reset,
         )
-        self._control_panel.grid(row=3, column=0, sticky="new", pady=(16, 0))
+        self._control_panel.grid(row=4, column=0, sticky="new", pady=(16, 0))
 
         modules = snapshot.get("modules", ())
         if isinstance(modules, (list, tuple)):
@@ -180,6 +192,15 @@ class SimulationApp:
         if isinstance(position, dict) and isinstance(velocity, dict):
             self._motion_panel.render(position, velocity)
 
+        ai_status = self._learner.status()
+        current_distance = self._learner.distance_to_target(snapshot)
+        self._ai_panel.render(
+            ai_status,
+            current_distance,
+            self._ai_training_active,
+            self._ai_control_active,
+        )
+
         active_actions = snapshot.get("active_actions", ())
         if isinstance(active_actions, tuple):
             status_suffix = ", ".join(active_actions) if active_actions else "Idle"
@@ -194,13 +215,17 @@ class SimulationApp:
         else:
             elapsed_seconds = 0.0
         state_label = "Paused" if paused else "Running"
+        control_label = "AI Control" if self._ai_control_active else "AI Training" if self._ai_training_active else "Manual"
         alerts = snapshot.get("alerts", ())
         failed_modules = 0
         module_count = 0
         if isinstance(modules, (list, tuple)):
             module_count = len(modules)
             failed_modules = sum(1 for module in modules if not bool(module.get("operational", False)))
-        status_text = f"Mission time {elapsed_seconds:6.1f}s | {state_label} | Modules {module_count} total, {failed_modules} failed | {status_suffix}"
+        status_text = (
+            f"Mission time {elapsed_seconds:6.1f}s | {state_label} | Mode {control_label} | "
+            f"Target distance {current_distance:5.2f} m | Modules {module_count} total, {failed_modules} failed | {status_suffix}"
+        )
         if isinstance(alerts, tuple) and alerts:
             status_text = f"{status_text} | ALERT: {', '.join(alerts)}"
         self._status_var.set(status_text)
@@ -250,7 +275,7 @@ class SimulationApp:
                 self._module_panels[module_id] = panel
 
             panel.grid(row=row_index, column=0, sticky="ew", pady=(0, 16))
-            panel.render(module)
+            panel.render(module, manual_controls_enabled=not self._ai_control_active)
             active_module_ids.add(module_id)
 
         for module_id, panel in self._module_panels.items():
@@ -258,10 +283,14 @@ class SimulationApp:
                 panel.grid_remove()
 
     def _handle_thruster_start(self, action_id: str) -> None:
+        if self._ai_control_active:
+            return
         self._engine.start_action(action_id)
         self.refresh(self._engine.snapshot())
 
     def _handle_thruster_stop(self, action_id: str) -> None:
+        if self._ai_control_active:
+            return
         self._engine.stop_action(action_id)
         self.refresh(self._engine.snapshot())
 
@@ -274,10 +303,50 @@ class SimulationApp:
         self.refresh(self._engine.snapshot())
 
     def _handle_reset(self) -> None:
+        self._ai_control_active = False
         self._engine.reset()
         self.refresh(self._engine.snapshot())
 
+    def _handle_ai_train(self, x: float, y: float, z: float) -> None:
+        self._sync_ai_target(x, y, z)
+        self._ai_training_active = True
+        self._ai_control_active = False
+        self._engine.set_active_thrusters(())
+        self.refresh(self._engine.snapshot())
+
+    def _handle_ai_run(self, x: float, y: float, z: float) -> None:
+        self._sync_ai_target(x, y, z)
+        if not bool(self._learner.status().get("has_policy", False)):
+            self._ai_training_active = False
+            self._ai_control_active = False
+            self._engine.set_active_thrusters(())
+            self.refresh(self._engine.snapshot())
+            return
+        self._ai_training_active = False
+        self._ai_control_active = True
+        preview_snapshot = self._engine.snapshot()
+        self._engine.set_active_thrusters(self._learner.select_thrusters(preview_snapshot))
+        self.refresh(self._engine.snapshot())
+
+    def _handle_ai_stop(self) -> None:
+        self._ai_training_active = False
+        self._ai_control_active = False
+        self._engine.set_active_thrusters(())
+        self.refresh(self._engine.snapshot())
+
+    def _sync_ai_target(self, x: float, y: float, z: float) -> None:
+        target = (float(x), float(y), float(z))
+        if target != self._learner.target:
+            self._learner.set_target(*target)
+
     def _schedule_next_tick(self) -> None:
+        if self._ai_training_active:
+            self._learner.train_generations(generations=1, generation_size=10, elite_count=3)
+
+        if self._ai_control_active:
+            preview_snapshot = self._engine.snapshot()
+            self._engine.set_active_thrusters(self._learner.select_thrusters(preview_snapshot))
+
         snapshot = self._engine.step()
         self.refresh(snapshot)
         interval_ms = max(50, int(self._engine.tick_seconds * 1000))

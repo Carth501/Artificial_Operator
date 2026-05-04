@@ -34,11 +34,35 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 3.0)
         self.assertAlmostEqual(snapshot["variables"]["position_x"]["value"], 6.0)
 
+    def test_set_active_thrusters_replaces_previous_command_set(self) -> None:
+        self.engine.start_action("thruster_x_positive")
+
+        commanded = self.engine.set_active_thrusters(("thruster_y_negative", "convert_h2o_to_h2"))
+        snapshot = self.engine.step(1.0)
+
+        self.assertEqual(commanded, ("thruster_y_negative",))
+        self.assertEqual(snapshot["active_actions"], ("thruster_y_negative",))
+        self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["position_x"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["velocity_y"]["value"], -1.5)
+        self.assertAlmostEqual(snapshot["variables"]["position_y"]["value"], -1.5)
+
     def test_solar_module_charges_electricity(self) -> None:
         self.engine.step(1.0)
         snapshot = self.engine.snapshot()
 
         self.assertAlmostEqual(snapshot["variables"]["electricity"]["value"], 20.4)
+
+    def test_clone_returns_fresh_engine_state(self) -> None:
+        self.engine.start_action("thruster_x_positive")
+        self.engine.step(1.0)
+
+        clone = self.engine.clone()
+        snapshot = clone.snapshot()
+
+        self.assertEqual(snapshot["active_actions"], ())
+        self.assertAlmostEqual(snapshot["variables"]["position_x"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 70.0)
 
     def test_conversion_moves_h2o_into_h2_and_o2(self) -> None:
         self.engine._state.values["O2"] = 50.0
@@ -152,12 +176,14 @@ class SimulationEngineTests(unittest.TestCase):
 
     def test_reset_restores_module_integrity_and_container_state(self) -> None:
         self.engine.set_module_integrity("resource_management", 0.0)
+        self.engine.set_active_thrusters(("thruster_x_positive",))
         self.engine.reset()
         snapshot = self.engine.snapshot()
 
         self.assertAlmostEqual(snapshot["modules"][0]["integrity"], 100.0)
         self.assertTrue(snapshot["modules"][0]["operational"])
         self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 70.0)
+        self.assertEqual(snapshot["active_actions"], ())
 
     def test_engine_accepts_new_variable_from_config(self) -> None:
         variables_payload = json.loads((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable
@@ -109,6 +110,163 @@ class MotionPanel(ttk.LabelFrame):
         for axis in ("x", "y", "z"):
             self._position_vars[axis].set(f"{position.get(axis, 0.0):.2f}")
             self._velocity_vars[axis].set(f"{velocity.get(axis, 0.0):.2f}")
+
+
+class AIPanel(ttk.LabelFrame):
+    def __init__(
+        self,
+        parent: ttk.Widget,
+        on_train: Callable[[float, float, float], None],
+        on_run: Callable[[float, float, float], None],
+        on_stop: Callable[[], None],
+    ) -> None:
+        super().__init__(parent, text="AI Flight", padding=14, style="Card.TLabelframe")
+        self.columnconfigure(0, weight=1)
+        self._on_train = on_train
+        self._on_run = on_run
+        self._on_stop = on_stop
+        self._target_vars = {
+            "x": tk.StringVar(value="10.0"),
+            "y": tk.StringVar(value="0.0"),
+            "z": tk.StringVar(value="0.0"),
+        }
+        self._mode_var = tk.StringVar(value="Manual")
+        self._distance_var = tk.StringVar(value="0.00 m")
+        self._generation_var = tk.StringVar(value="0")
+        self._episode_var = tk.StringVar(value="0")
+        self._success_var = tk.StringVar(value="0")
+        self._reward_var = tk.StringVar(value="0.00")
+        self._best_distance_var = tk.StringVar(value="-")
+        self._action_var = tk.StringVar(value="idle")
+
+        target_frame = ttk.Frame(self, style="Panel.TFrame")
+        target_frame.grid(row=0, column=0, sticky="ew")
+        for column_index in range(3):
+            target_frame.columnconfigure(column_index, weight=1)
+
+        ttk.Label(target_frame, text="Target Coordinates", style="SectionTitle.TLabel").grid(
+            row=0,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(0, 8),
+        )
+        for column_index, axis in enumerate(("x", "y", "z")):
+            section = ttk.Frame(target_frame, style="Panel.TFrame")
+            section.grid(row=1, column=column_index, sticky="ew", padx=(0, 10 if column_index < 2 else 0))
+            section.columnconfigure(0, weight=1)
+            ttk.Label(section, text=axis.upper(), style="AxisLabel.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Entry(section, textvariable=self._target_vars[axis], justify="right", width=9).grid(
+                row=1,
+                column=0,
+                sticky="ew",
+                pady=(4, 0),
+            )
+
+        button_frame = ttk.Frame(self, style="Panel.TFrame")
+        button_frame.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
+
+        self._train_button = ttk.Button(
+            button_frame,
+            text="Train",
+            style="Command.TButton",
+            command=lambda: self._dispatch_with_target(self._on_train),
+        )
+        self._train_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        self._run_button = ttk.Button(
+            button_frame,
+            text="Run AI",
+            style="Command.TButton",
+            command=lambda: self._dispatch_with_target(self._on_run),
+        )
+        self._run_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+
+        self._stop_button = ttk.Button(
+            button_frame,
+            text="Stop",
+            style="Command.TButton",
+            command=self._on_stop,
+        )
+        self._stop_button.grid(row=0, column=2, sticky="ew")
+
+        metrics = ttk.Frame(self, style="Panel.TFrame")
+        metrics.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        metrics.columnconfigure(1, weight=1)
+
+        rows = (
+            ("Mode", self._mode_var),
+            ("Distance", self._distance_var),
+            ("Generations", self._generation_var),
+            ("Episodes", self._episode_var),
+            ("Successes", self._success_var),
+            ("Best Reward", self._reward_var),
+            ("Closest Pass", self._best_distance_var),
+            ("Last Action", self._action_var),
+        )
+        for row_index, (label, variable) in enumerate(rows):
+            ttk.Label(metrics, text=label, style="MetricLabel.TLabel").grid(row=row_index, column=0, sticky="w", pady=2)
+            ttk.Label(metrics, textvariable=variable, style="MetricValue.TLabel").grid(
+                row=row_index,
+                column=1,
+                sticky="e",
+                padx=(12, 0),
+                pady=2,
+            )
+
+    def render(
+        self,
+        status: dict[str, Any],
+        current_distance: float,
+        training_active: bool,
+        control_active: bool,
+    ) -> None:
+        if control_active:
+            mode_label = "AI Control"
+        elif training_active:
+            mode_label = "Training"
+        else:
+            mode_label = "Manual"
+        self._mode_var.set(mode_label)
+        self._distance_var.set(f"{current_distance:.2f} m")
+        self._generation_var.set(str(int(status.get("generations_completed", 0))))
+        self._episode_var.set(str(int(status.get("episodes_completed", 0))))
+        self._success_var.set(str(int(status.get("successful_episodes", 0))))
+
+        best_reward = status.get("best_reward", float("-inf"))
+        self._reward_var.set("-" if best_reward == float("-inf") else f"{float(best_reward):.2f}")
+
+        best_distance = status.get("best_distance", float("inf"))
+        self._best_distance_var.set("-" if math.isinf(float(best_distance)) else f"{float(best_distance):.2f} m")
+        self._action_var.set(str(status.get("last_action_id", "idle")))
+
+        if training_active:
+            self._train_button.state(["disabled"])
+        else:
+            self._train_button.state(["!disabled"])
+
+        if bool(status.get("has_policy", False)):
+            self._run_button.state(["!disabled"])
+        else:
+            self._run_button.state(["disabled"])
+
+        if training_active or control_active:
+            self._stop_button.state(["!disabled"])
+        else:
+            self._stop_button.state(["disabled"])
+
+    def _dispatch_with_target(self, callback: Callable[[float, float, float], None]) -> None:
+        try:
+            x = float(self._target_vars["x"].get())
+            y = float(self._target_vars["y"].get())
+            z = float(self._target_vars["z"].get())
+        except ValueError:
+            self._mode_var.set("Enter numeric target values")
+            return
+        callback(x, y, z)
 
 
 class ModuleMapPanel(ttk.LabelFrame):
@@ -350,7 +508,7 @@ class ModulePanel(ttk.LabelFrame):
                         button.grid(row=row_index, column=column_index, sticky="ew", padx=pad, pady=6)
                         self._conversion_buttons[action_id] = button
 
-    def render(self, module: dict[str, Any]) -> None:
+    def render(self, module: dict[str, Any], manual_controls_enabled: bool = True) -> None:
         self.configure(text=self._module_title(module))
         integrity = float(module.get("integrity", 0.0))
         operational = bool(module.get("operational", False))
@@ -395,6 +553,11 @@ class ModulePanel(ttk.LabelFrame):
                             continue
                         if not action.get("operational", False):
                             button.configure(state=tk.DISABLED, bg=THRUSTER_DISABLED, fg=TEXT_MUTED)
+                        elif not manual_controls_enabled:
+                            if action.get("active", False):
+                                button.configure(state=tk.DISABLED, bg=THRUSTER_ACTIVE, fg=THRUSTER_TEXT)
+                            else:
+                                button.configure(state=tk.DISABLED, bg=THRUSTER_DISABLED, fg=TEXT_MUTED)
                         elif action.get("active", False):
                             button.configure(state=tk.NORMAL, bg=THRUSTER_ACTIVE, fg=THRUSTER_TEXT)
                         else:
