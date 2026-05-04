@@ -141,6 +141,51 @@ class ModuleMapPanel(ttk.LabelFrame):
         canvas_height = (square_size * rows) + (gap * (rows - 1)) + (padding * 2)
         self._canvas.configure(width=canvas_width, height=canvas_height)
 
+        module_positions: dict[str, tuple[float, float]] = {}
+        for index, module in enumerate(modules):
+            module_id = str(module.get("id", ""))
+            if not module_id:
+                continue
+
+            column_index = index % columns
+            row_index = index // columns
+            x0 = padding + column_index * (square_size + gap)
+            y0 = padding + row_index * (square_size + gap)
+            x1 = x0 + square_size
+            y1 = y0 + square_size
+            module_positions[module_id] = ((x0 + x1) / 2, (y0 + y1) / 2)
+
+        drawn_connections: set[tuple[str, str]] = set()
+        for module in modules:
+            module_id = str(module.get("id", ""))
+            origin = module_positions.get(module_id)
+            if origin is None:
+                continue
+
+            connections = module.get("connections", ())
+            if not isinstance(connections, tuple | list):
+                continue
+
+            for connected_module_id in connections:
+                target_id = str(connected_module_id)
+                target = module_positions.get(target_id)
+                if target is None:
+                    continue
+
+                edge = tuple(sorted((module_id, target_id)))
+                if edge in drawn_connections:
+                    continue
+
+                self._canvas.create_line(
+                    origin[0],
+                    origin[1],
+                    target[0],
+                    target[1],
+                    fill=TEXT_MUTED,
+                    width=3,
+                )
+                drawn_connections.add(edge)
+
         for index, module in enumerate(modules):
             column_index = index % columns
             row_index = index // columns

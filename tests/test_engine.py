@@ -46,8 +46,26 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertEqual(snapshot["modules"][0]["number"], 1)
         self.assertEqual(snapshot["modules"][0]["id"], "resource_management")
+        self.assertEqual(snapshot["modules"][0]["connections"], ("propulsion",))
         self.assertEqual(snapshot["modules"][1]["number"], 2)
         self.assertEqual(snapshot["modules"][1]["id"], "propulsion")
+        self.assertEqual(snapshot["modules"][1]["connections"], ("resource_management",))
+
+    def test_invalid_module_connection_fails_loading(self) -> None:
+        modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
+        modules_payload["modules"][0]["connections"] = ["missing_module"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            variables_path = temp_root / "variables.json"
+            actions_path = temp_root / "actions.json"
+            modules_path = temp_root / "modules.json"
+            variables_path.write_text((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"), encoding="utf-8")
+            actions_path.write_text((CONFIG_ROOT / "actions.json").read_text(encoding="utf-8"), encoding="utf-8")
+            modules_path.write_text(json.dumps(modules_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unknown connection"):
+                SimulationEngine.from_paths(variables_path, actions_path, modules_path)
 
     def test_failed_resource_module_drains_containers_and_blocks_conversion(self) -> None:
         self.engine.set_module_integrity("resource_management", 0.0)

@@ -33,6 +33,7 @@ class ModuleDefinition:
     module_id: str
     label: str
     initial_integrity: float = 100.0
+    connections: tuple[str, ...] = field(default_factory=tuple)
     systems: tuple[SystemDefinition, ...] = field(default_factory=tuple)
 
 
@@ -110,6 +111,7 @@ def load_module_definitions(config_path: str | Path) -> dict[str, ModuleDefiniti
         if module_id in module_definitions:
             raise ValueError(f"Duplicate module definition: {module_id}")
 
+        connections = _string_tuple(raw_module.get("connections", []))
         systems: list[SystemDefinition] = []
         for raw_system in raw_module.get("systems", []):
             system_id = raw_system["id"]
@@ -152,8 +154,18 @@ def load_module_definitions(config_path: str | Path) -> dict[str, ModuleDefiniti
             module_id=module_id,
             label=raw_module.get("label", module_id),
             initial_integrity=initial_integrity,
+            connections=connections,
             systems=tuple(systems),
         )
+
+    for module in module_definitions.values():
+        for connected_module_id in module.connections:
+            if connected_module_id == module.module_id:
+                raise ValueError(f"Module cannot connect to itself: {module.module_id}")
+            if connected_module_id not in module_definitions:
+                raise ValueError(
+                    f"Module references unknown connection: {module.module_id} -> {connected_module_id}"
+                )
 
     return module_definitions
 

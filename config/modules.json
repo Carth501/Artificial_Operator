@@ -4,6 +4,9 @@
 			"id": "resource_management",
 			"label": "Resource Management",
 			"initial_integrity": 100.0,
+			"connections": [
+				"propulsion"
+			],
 			"systems": [
 				{
 					"id": "fuel_tank",
@@ -59,6 +62,9 @@
 			"id": "propulsion",
 			"label": "Propulsion",
 			"initial_integrity": 100.0,
+			"connections": [
+				"resource_management"
+			],
 			"systems": [
 				{
 					"id": "thruster_array",

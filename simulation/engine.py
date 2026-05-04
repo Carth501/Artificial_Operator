@@ -92,6 +92,7 @@ class SimulationEngine:
                 "number": module_number,
                 "label": module.label,
                 "initial_integrity": module.initial_integrity,
+                "connections": module.connections,
                 "systems": tuple(
                     {
                         "id": system.system_id,
@@ -345,6 +346,7 @@ class SimulationEngine:
                     "label": module.label,
                     "integrity": self._state.module_integrity[module.module_id],
                     "operational": operational,
+                    "connections": module.connections,
                     "systems": systems,
                     "variables": owned_variables,
                     "actions": owned_actions,
