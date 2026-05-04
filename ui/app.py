@@ -5,7 +5,7 @@ from tkinter import ttk
 
 from simulation.engine import SimulationEngine
 
-from .panels import APP_BACKGROUND, ControlPanel, ModulePanel, MotionPanel, VariableGroupPanel
+from .panels import APP_BACKGROUND, ControlPanel, ModuleMapPanel, ModulePanel, MotionPanel, VariableGroupPanel
 
 
 class SimulationApp:
@@ -107,11 +107,14 @@ class SimulationApp:
         right_column.grid(row=1, column=1, sticky="nsew")
         right_column.columnconfigure(0, weight=1)
 
+        self._module_map_panel = ModuleMapPanel(right_column)
+        self._module_map_panel.grid(row=0, column=0, sticky="new")
+
         self._motion_panel = MotionPanel(right_column)
-        self._motion_panel.grid(row=0, column=0, sticky="new")
+        self._motion_panel.grid(row=1, column=0, sticky="new", pady=(16, 0))
 
         self._core_column = ttk.Frame(right_column, style="App.TFrame")
-        self._core_column.grid(row=1, column=0, sticky="new", pady=(16, 0))
+        self._core_column.grid(row=2, column=0, sticky="new", pady=(16, 0))
         self._core_column.columnconfigure(0, weight=1)
 
         self._control_panel = ControlPanel(
@@ -119,7 +122,7 @@ class SimulationApp:
             on_pause=self._handle_pause,
             on_reset=self._handle_reset,
         )
-        self._control_panel.grid(row=2, column=0, sticky="new", pady=(16, 0))
+        self._control_panel.grid(row=3, column=0, sticky="new", pady=(16, 0))
 
         modules = snapshot.get("modules", ())
         if isinstance(modules, (list, tuple)):
@@ -129,6 +132,7 @@ class SimulationApp:
         modules = snapshot.get("modules", ())
         if isinstance(modules, (list, tuple)):
             self._render_modules(modules)
+            self._module_map_panel.render(modules)
 
         groups = snapshot.get("core_groups", {})
         if isinstance(groups, dict):

@@ -9,6 +9,9 @@ APP_BACKGROUND = "#f4efe6"
 PANEL_BACKGROUND = "#fffaf2"
 TEXT_PRIMARY = "#22313a"
 TEXT_MUTED = "#6d5f54"
+MODULE_MAP_FILL = "#e7dccd"
+MODULE_MAP_OPERATIONAL = "#2f7d63"
+MODULE_MAP_FAILED = "#a35221"
 THRUSTER_IDLE = "#d3b893"
 THRUSTER_ACTIVE = "#2f7d63"
 THRUSTER_TEXT = "#fffaf2"
@@ -108,6 +111,68 @@ class MotionPanel(ttk.LabelFrame):
             self._velocity_vars[axis].set(f"{velocity.get(axis, 0.0):.2f}")
 
 
+class ModuleMapPanel(ttk.LabelFrame):
+    def __init__(self, parent: ttk.Widget) -> None:
+        super().__init__(parent, text="Module Map", padding=14, style="Card.TLabelframe")
+        self.columnconfigure(0, weight=1)
+        self._canvas = tk.Canvas(
+            self,
+            background=PANEL_BACKGROUND,
+            highlightthickness=0,
+            bd=0,
+            height=220,
+        )
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+
+    def render(self, modules: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
+        self._canvas.delete("all")
+        module_count = len(modules)
+        if module_count == 0:
+            self._canvas.configure(height=120)
+            self._canvas.create_text(140, 60, text="No modules configured", fill=TEXT_MUTED, font=("Bahnschrift", 11))
+            return
+
+        columns = 2 if module_count > 1 else 1
+        square_size = 96
+        gap = 16
+        padding = 12
+        rows = (module_count + columns - 1) // columns
+        canvas_width = (square_size * columns) + (gap * (columns - 1)) + (padding * 2)
+        canvas_height = (square_size * rows) + (gap * (rows - 1)) + (padding * 2)
+        self._canvas.configure(width=canvas_width, height=canvas_height)
+
+        for index, module in enumerate(modules):
+            column_index = index % columns
+            row_index = index // columns
+            x0 = padding + column_index * (square_size + gap)
+            y0 = padding + row_index * (square_size + gap)
+            x1 = x0 + square_size
+            y1 = y0 + square_size
+
+            number = int(module.get("number", index + 1))
+            label = str(module.get("label", "Module"))
+            operational = bool(module.get("operational", False))
+            fill = MODULE_MAP_OPERATIONAL if operational else MODULE_MAP_FAILED
+
+            self._canvas.create_rectangle(x0, y0, x1, y1, fill=MODULE_MAP_FILL, outline=fill, width=3)
+            self._canvas.create_text(
+                (x0 + x1) / 2,
+                y0 + 26,
+                text=f"M{number}",
+                fill=fill,
+                font=("Bahnschrift SemiBold", 18),
+            )
+            self._canvas.create_text(
+                (x0 + x1) / 2,
+                y0 + 58,
+                text=label,
+                fill=TEXT_PRIMARY,
+                width=square_size - 16,
+                justify="center",
+                font=("Bahnschrift", 10),
+            )
+
+
 class ModulePanel(ttk.LabelFrame):
     def __init__(
         self,
@@ -117,7 +182,7 @@ class ModulePanel(ttk.LabelFrame):
         on_thruster_stop: Callable[[str], None],
         on_conversion: Callable[[str], None],
     ) -> None:
-        super().__init__(parent, text=str(module.get("label", "Module")), padding=14, style="Card.TLabelframe")
+        super().__init__(parent, text=self._module_title(module), padding=14, style="Card.TLabelframe")
         self._thruster_buttons: dict[str, tk.Button] = {}
         self._conversion_buttons: dict[str, ttk.Button] = {}
         self._system_status_vars: dict[str, tk.StringVar] = {}
@@ -142,6 +207,13 @@ class ModulePanel(ttk.LabelFrame):
 
         self._build_systems(module, on_thruster_start, on_thruster_stop, on_conversion)
         self.render(module)
+
+    def _module_title(self, module: dict[str, Any]) -> str:
+        number = int(module.get("number", 0))
+        label = str(module.get("label", "Module"))
+        if number <= 0:
+            return label
+        return f"Module {number}: {label}"
 
     def _build_systems(
         self,
@@ -222,7 +294,7 @@ class ModulePanel(ttk.LabelFrame):
                         self._conversion_buttons[action_id] = button
 
     def render(self, module: dict[str, Any]) -> None:
-        self.configure(text=str(module.get("label", "Module")))
+        self.configure(text=self._module_title(module))
         integrity = float(module.get("integrity", 0.0))
         operational = bool(module.get("operational", False))
         self._integrity_var.set(f"Integrity {integrity:5.1f}")

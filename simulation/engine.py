@@ -89,6 +89,7 @@ class SimulationEngine:
         return tuple(
             {
                 "id": module.module_id,
+                "number": module_number,
                 "label": module.label,
                 "initial_integrity": module.initial_integrity,
                 "systems": tuple(
@@ -102,7 +103,7 @@ class SimulationEngine:
                     for system in module.systems
                 ),
             }
-            for module in self._simulation_config.module_definitions.values()
+            for module_number, module in enumerate(self._simulation_config.module_definitions.values(), start=1)
         )
 
     def start_action(self, action_id: str) -> None:
@@ -315,7 +316,7 @@ class SimulationEngine:
     def _build_module_snapshot(self, variables: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         modules: list[dict[str, Any]] = []
 
-        for module in self._simulation_config.module_definitions.values():
+        for module_number, module in enumerate(self._simulation_config.module_definitions.values(), start=1):
             systems: list[dict[str, Any]] = []
             owned_variables: list[dict[str, Any]] = []
             owned_actions: list[dict[str, Any]] = []
@@ -340,6 +341,7 @@ class SimulationEngine:
             modules.append(
                 {
                     "id": module.module_id,
+                    "number": module_number,
                     "label": module.label,
                     "integrity": self._state.module_integrity[module.module_id],
                     "operational": operational,

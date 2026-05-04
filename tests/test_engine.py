@@ -41,6 +41,14 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["variables"]["H2O"]["value"], 78.0)
         self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 71.2)
 
+    def test_snapshot_assigns_stable_module_numbers(self) -> None:
+        snapshot = self.engine.snapshot()
+
+        self.assertEqual(snapshot["modules"][0]["number"], 1)
+        self.assertEqual(snapshot["modules"][0]["id"], "resource_management")
+        self.assertEqual(snapshot["modules"][1]["number"], 2)
+        self.assertEqual(snapshot["modules"][1]["id"], "propulsion")
+
     def test_failed_resource_module_drains_containers_and_blocks_conversion(self) -> None:
         self.engine.set_module_integrity("resource_management", 0.0)
         snapshot = self.engine.snapshot()
