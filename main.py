@@ -5,7 +5,15 @@ from pathlib import Path
 from typing import Sequence
 
 from simulation import SimulationEngine
-from simulation.ai import SimulationAIRunner, TargetPositionAgent, TargetPositionObjective, TargetPositionPolicyTrainer
+from simulation.ai import (
+    ParameterizedTargetPositionAgent,
+    SimulationAIRunner,
+    TargetPositionAgent,
+    TargetPositionObjective,
+    TargetPositionPolicyTrainer,
+    load_target_policy_parameters,
+    save_target_policy_parameters,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=6,
         help="Number of policy-search rounds to run in training mode.",
     )
+    parser.add_argument(
+        "--policy-file",
+        type=Path,
+        default=None,
+        help="Optional policy JSON file to load for AI mode or to use as the initial policy in training mode.",
+    )
+    parser.add_argument(
+        "--save-policy",
+        type=Path,
+        default=None,
+        help="Optional destination path for saving the best trained policy in training mode.",
+    )
     return parser
 
 
@@ -60,7 +80,13 @@ def run_manual_mode(config_directory: Path) -> int:
 
 def run_ai_mode(config_directory: Path, args: argparse.Namespace) -> int:
     engine = SimulationEngine.from_config_directory(config_directory)
-    agent = TargetPositionAgent(engine.list_thrusters())
+    policy_suffix = "default_policy"
+    if args.policy_file is None:
+        agent = TargetPositionAgent(engine.list_thrusters())
+    else:
+        parameters = load_target_policy_parameters(args.policy_file)
+        agent = ParameterizedTargetPositionAgent(engine.list_thrusters(), parameters=parameters)
+        policy_suffix = f"policy_file={args.policy_file}"
     runner = SimulationAIRunner(engine, agent)
     objective = TargetPositionObjective(
         target_position=(args.target_x, args.target_y, args.target_z),
@@ -77,7 +103,8 @@ def run_ai_mode(config_directory: Path, args: argparse.Namespace) -> int:
         f"tolerance={objective.tolerance:.2f} | "
         f"settle_velocity={objective.settle_velocity:.2f} | "
         f"max_steps={objective.max_steps} | "
-        f"dt={step_seconds:.2f}"
+        f"dt={step_seconds:.2f} | "
+        f"{policy_suffix}"
     )
 
     result = runner.run(
@@ -106,6 +133,7 @@ def run_ai_mode(config_directory: Path, args: argparse.Namespace) -> int:
 
 
 def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
+    initial_parameters = None if args.policy_file is None else load_target_policy_parameters(args.policy_file)
     objective = TargetPositionObjective(
         target_position=(args.target_x, args.target_y, args.target_z),
         tolerance=args.tolerance,
@@ -131,8 +159,14 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
         objective,
         rounds=args.training_rounds,
         dt_seconds=args.dt,
+        initial_parameters=initial_parameters,
     )
     best_run = training_result.best_run_result
+
+    saved_policy_suffix = ""
+    if args.save_policy is not None:
+        save_target_policy_parameters(args.save_policy, training_result.best_parameters)
+        saved_policy_suffix = f" | saved_policy={args.save_policy}"
 
     print(
         "Training complete | "
@@ -141,6 +175,7 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
         f"best_reward={training_result.best_total_reward:.3f} | "
         f"success={best_run.success} | "
         f"reason={best_run.stop_reason}"
+        f"{saved_policy_suffix}"
     )
     print(
         "Best policy | "

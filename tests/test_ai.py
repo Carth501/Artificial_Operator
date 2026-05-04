@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from main import main
@@ -12,6 +13,8 @@ from simulation.ai import (
     TargetPositionAgent,
     TargetPositionObjective,
     TargetPositionPolicyTrainer,
+    load_target_policy_parameters,
+    save_target_policy_parameters,
 )
 from simulation.engine import SimulationEngine
 
@@ -124,8 +127,56 @@ class AIModeCliTests(unittest.TestCase):
         self.assertIn("reward=", stdout)
         self.assertIn("Final state", stdout)
 
+    def test_main_ai_mode_loads_saved_policy_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "saved-policy.json"
+            save_target_policy_parameters(policy_path, TargetPolicyParameters())
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "ai",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--progress-every",
+                        "100",
+                        "--policy-file",
+                        str(policy_path),
+                    ]
+                )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("policy_file=", stdout)
+        self.assertIn("reason=target_reached", stdout)
+
 
 class TrainingModeTests(unittest.TestCase):
+    def test_policy_persistence_round_trip(self) -> None:
+        parameters = TargetPolicyParameters(
+            brake_distance_multiplier=1.25,
+            approach_distance_multiplier=3.0,
+            approach_velocity_multiplier=0.75,
+            settle_velocity_multiplier=1.5,
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "policy.json"
+            save_target_policy_parameters(policy_path, parameters)
+            loaded = load_target_policy_parameters(policy_path)
+
+        self.assertEqual(loaded, parameters)
+
     def test_trainer_improves_reward_from_poor_initial_policy(self) -> None:
         trainer = TargetPositionPolicyTrainer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
         objective = TargetPositionObjective(
@@ -180,6 +231,41 @@ class TrainingModeTests(unittest.TestCase):
         self.assertIn("Training mode objective", stdout)
         self.assertIn("Training complete", stdout)
         self.assertIn("Best policy", stdout)
+
+    def test_main_training_mode_saves_policy_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "trained-policy.json"
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "train",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--training-rounds",
+                        "3",
+                        "--save-policy",
+                        str(policy_path),
+                    ]
+                )
+
+            self.assertTrue(policy_path.exists())
+            saved_parameters = load_target_policy_parameters(policy_path)
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(saved_parameters, TargetPolicyParameters())
+        self.assertIn("saved_policy=", stdout)
 
 
 if __name__ == "__main__":

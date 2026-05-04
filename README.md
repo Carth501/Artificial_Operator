@@ -52,6 +52,12 @@ Both commands run the same modular AI runner. The current shipped agent is a det
 
 The AI runner now also reports an aggregate reward score and keeps per-step episode data, which is the current foundation for later reinforcement-learning experiments.
 
+To reuse a trained policy instead of the default target-seeking parameters, pass a saved policy file:
+
+```bash
+python ai_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --policy-file policies/target-policy.json
+```
+
 ## Run Training Mode
 
 Use the shared main entry point with `--mode train`:
@@ -67,6 +73,14 @@ python train_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps
 ```
 
 The current training loop is a deterministic policy-search pass over a parameterized target-position policy. It uses the same simulation runner and reward signal as inference mode, which keeps training and execution on a shared interface.
+
+To save the best discovered policy for later inference, add `--save-policy`:
+
+```bash
+python train_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --training-rounds 3 --save-policy policies/target-policy.json
+```
+
+You can also use `--policy-file` in training mode to seed training from an existing saved policy instead of starting from the default parameters.
 
 ## Run Tests
 
@@ -102,6 +116,7 @@ Artificial_Operator/
 |   |   |-- __init__.py
 |   |   |-- agents.py
 |   |   |-- models.py
+|   |   |-- persistence.py
 |   |   |-- runner.py
 |   |   `-- training.py
 |   |-- engine.py
