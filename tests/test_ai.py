@@ -2,17 +2,23 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 from io import StringIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from main import main
 from simulation.ai import (
+    PolicyComparisonCandidate,
+    PolicyComparisonResult,
+    PolicyEvaluationResult,
     SimulationAIRunner,
     TargetPolicyMetadata,
     TargetPolicyParameters,
     TargetPositionCurriculum,
     TargetPositionAgent,
+    TargetPositionPolicyComparer,
+    TargetPositionPolicyEvaluator,
     TargetPositionObjective,
     TargetPositionPolicyTrainer,
     build_target_position_curriculum,
@@ -176,6 +182,51 @@ class AIModeCliTests(unittest.TestCase):
         self.assertIn("policy_avg_reward=62.651", stdout)
         self.assertIn("reason=target_reached", stdout)
 
+    def test_main_ai_mode_surfaces_saved_evaluation_metadata(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "saved-policy.json"
+            save_target_policy_parameters(
+                policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(
+                    source="training",
+                    training_rounds=2,
+                    curriculum_size=3,
+                    curriculum_seed=17,
+                    best_average_reward=62.651,
+                    evaluation_curriculum_seed=29,
+                    evaluation_average_reward=60.374,
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "ai",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--progress-every",
+                        "100",
+                        "--policy-file",
+                        str(policy_path),
+                    ]
+                )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("eval_seed=29", stdout)
+        self.assertIn("eval_avg_reward=60.374", stdout)
+
 
 class TrainingModeTests(unittest.TestCase):
     def test_build_target_position_curriculum_is_deterministic(self) -> None:
@@ -232,6 +283,18 @@ class TrainingModeTests(unittest.TestCase):
         self.assertEqual(loaded, parameters)
         self.assertEqual(loaded_metadata, metadata)
 
+    def test_policy_loader_accepts_utf8_bom(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "bom-policy.json"
+            policy_path.write_text(
+                '{"version":1,"policy_kind":"target_position_policy","parameters":{"brake_distance_multiplier":1.0,"approach_distance_multiplier":2.0,"approach_velocity_multiplier":1.0,"settle_velocity_multiplier":1.0}}',
+                encoding="utf-8-sig",
+            )
+
+            loaded_parameters = load_target_policy_parameters(policy_path)
+
+        self.assertEqual(loaded_parameters, TargetPolicyParameters())
+
     def test_trainer_improves_reward_from_poor_initial_policy(self) -> None:
         trainer = TargetPositionPolicyTrainer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
         objective = TargetPositionObjective(
@@ -282,6 +345,72 @@ class TrainingModeTests(unittest.TestCase):
         self.assertAlmostEqual(result.best_average_reward, result.best_total_reward / 3)
         self.assertEqual(result.evaluations[0].curriculum_size, 3)
         self.assertGreaterEqual(result.evaluations[0].success_rate, 0.0)
+
+    def test_policy_evaluator_curriculum_summarizes_results(self) -> None:
+        evaluator = TargetPositionPolicyEvaluator(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
+        anchor = TargetPositionObjective(
+            target_position=(5.0, 0.0, 0.0),
+            tolerance=0.6,
+            settle_velocity=0.6,
+            max_steps=80,
+        )
+        curriculum = build_target_position_curriculum(
+            anchor,
+            count=3,
+            seed=29,
+            target_range_x=6.0,
+            target_range_y=4.0,
+            target_range_z=2.0,
+        )
+
+        result = evaluator.evaluate_curriculum(TargetPolicyParameters(), curriculum.objectives, dt_seconds=0.5)
+
+        self.assertIsInstance(result, PolicyEvaluationResult)
+        self.assertEqual(result.curriculum_size, 3)
+        self.assertEqual(len(result.run_results), 3)
+        self.assertEqual(result.anchor_run_result, result.run_results[0])
+        self.assertAlmostEqual(result.average_reward, result.total_reward / 3)
+        self.assertGreaterEqual(result.success_rate, 0.0)
+        self.assertLessEqual(result.success_rate, 1.0)
+
+    def test_policy_comparer_ranks_better_policy_first(self) -> None:
+        comparer = TargetPositionPolicyComparer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
+        anchor = TargetPositionObjective(
+            target_position=(5.0, 0.0, 0.0),
+            tolerance=0.6,
+            settle_velocity=0.6,
+            max_steps=80,
+        )
+        curriculum = build_target_position_curriculum(
+            anchor,
+            count=3,
+            seed=29,
+            target_range_x=6.0,
+            target_range_y=4.0,
+            target_range_z=2.0,
+        )
+
+        result = comparer.compare_curriculum(
+            (
+                PolicyComparisonCandidate("default", TargetPolicyParameters()),
+                PolicyComparisonCandidate(
+                    "bad",
+                    TargetPolicyParameters(
+                        brake_distance_multiplier=0.25,
+                        approach_distance_multiplier=0.5,
+                        approach_velocity_multiplier=2.5,
+                        settle_velocity_multiplier=2.0,
+                    ),
+                ),
+            ),
+            curriculum.objectives,
+            dt_seconds=0.5,
+        )
+
+        self.assertIsInstance(result, PolicyComparisonResult)
+        self.assertEqual(result.entries[0].label, "default")
+        self.assertEqual(result.entries[1].label, "bad")
+        self.assertGreater(result.entries[0].average_reward, result.entries[1].average_reward)
 
     def test_main_training_mode_runs_headless(self) -> None:
         output = StringIO()
@@ -350,6 +479,250 @@ class TrainingModeTests(unittest.TestCase):
         self.assertIn("curriculum_targets=3", stdout)
         self.assertIn("success_rate=", stdout)
         self.assertIn("best_avg_reward=", stdout)
+
+    def test_main_evaluation_mode_runs_curriculum(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "saved-policy.json"
+            save_target_policy_parameters(
+                policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(
+                    source="training",
+                    training_rounds=2,
+                    curriculum_size=3,
+                    curriculum_seed=17,
+                    best_average_reward=62.651,
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "evaluate",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--curriculum-targets",
+                        "3",
+                        "--curriculum-seed",
+                        "29",
+                        "--target-range-x",
+                        "6",
+                        "--target-range-y",
+                        "4",
+                        "--target-range-z",
+                        "2",
+                        "--policy-file",
+                        str(policy_path),
+                    ]
+                )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Evaluation mode objective", stdout)
+        self.assertIn("policy_file=", stdout)
+        self.assertIn("evaluation_targets=3", stdout)
+        self.assertIn("eval_success_rate=", stdout)
+        self.assertIn("eval_avg_reward=", stdout)
+
+    def test_main_evaluation_mode_can_save_metadata_back_to_policy(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "saved-policy.json"
+            save_target_policy_parameters(
+                policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(
+                    source="training",
+                    training_rounds=2,
+                    curriculum_size=3,
+                    curriculum_seed=17,
+                    best_average_reward=62.651,
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "evaluate",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--curriculum-targets",
+                        "3",
+                        "--curriculum-seed",
+                        "29",
+                        "--target-range-x",
+                        "6",
+                        "--target-range-y",
+                        "4",
+                        "--target-range-z",
+                        "2",
+                        "--policy-file",
+                        str(policy_path),
+                        "--save-evaluation-metadata",
+                    ]
+                )
+
+            saved_metadata = load_target_policy_metadata(policy_path)
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIsNotNone(saved_metadata)
+        self.assertEqual(saved_metadata.evaluation_curriculum_size, 3)
+        self.assertEqual(saved_metadata.evaluation_curriculum_seed, 29)
+        self.assertEqual(saved_metadata.evaluation_target_ranges, (6.0, 4.0, 2.0))
+        self.assertAlmostEqual(saved_metadata.evaluation_success_rate, 1.0)
+        self.assertEqual(saved_metadata.curriculum_seed, 17)
+        self.assertIn("updated_policy=", stdout)
+
+    def test_main_compare_mode_ranks_saved_policies(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            good_policy_path = Path(temp_dir) / "good-policy.json"
+            bad_policy_path = Path(temp_dir) / "bad-policy.json"
+            save_target_policy_parameters(
+                good_policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(source="training", best_average_reward=62.651),
+            )
+            save_target_policy_parameters(
+                bad_policy_path,
+                TargetPolicyParameters(
+                    brake_distance_multiplier=0.25,
+                    approach_distance_multiplier=0.5,
+                    approach_velocity_multiplier=2.5,
+                    settle_velocity_multiplier=2.0,
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "compare",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--curriculum-targets",
+                        "3",
+                        "--curriculum-seed",
+                        "29",
+                        "--target-range-x",
+                        "6",
+                        "--target-range-y",
+                        "4",
+                        "--target-range-z",
+                        "2",
+                        "--compare-policy",
+                        str(good_policy_path),
+                        "--compare-policy",
+                        str(bad_policy_path),
+                    ]
+                )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Compare mode objective", stdout)
+        self.assertIn("compared_policies=2", stdout)
+        self.assertIn("rank=1 | label=good-policy", stdout)
+        self.assertIn("rank=2 | label=bad-policy", stdout)
+
+    def test_main_compare_mode_can_save_report_json(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            good_policy_path = Path(temp_dir) / "good-policy.json"
+            bad_policy_path = Path(temp_dir) / "bad-policy.json"
+            report_path = Path(temp_dir) / "comparison-report.json"
+            save_target_policy_parameters(
+                good_policy_path,
+                TargetPolicyParameters(),
+                metadata=TargetPolicyMetadata(
+                    source="training",
+                    curriculum_size=3,
+                    curriculum_seed=17,
+                    best_average_reward=62.651,
+                ),
+            )
+            save_target_policy_parameters(
+                bad_policy_path,
+                TargetPolicyParameters(
+                    brake_distance_multiplier=0.25,
+                    approach_distance_multiplier=0.5,
+                    approach_velocity_multiplier=2.5,
+                    settle_velocity_multiplier=2.0,
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--mode",
+                        "compare",
+                        "--target-x",
+                        "5",
+                        "--target-y",
+                        "0",
+                        "--target-z",
+                        "0",
+                        "--dt",
+                        "0.5",
+                        "--max-steps",
+                        "80",
+                        "--curriculum-targets",
+                        "3",
+                        "--curriculum-seed",
+                        "29",
+                        "--target-range-x",
+                        "6",
+                        "--target-range-y",
+                        "4",
+                        "--target-range-z",
+                        "2",
+                        "--compare-policy",
+                        str(good_policy_path),
+                        "--compare-policy",
+                        str(bad_policy_path),
+                        "--save-comparison-report",
+                        str(report_path),
+                    ]
+                )
+
+            report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f"saved_report={report_path}", stdout)
+        self.assertEqual(report_payload["report_kind"], "policy_comparison_report")
+        self.assertEqual(report_payload["curriculum_seed"], 29)
+        self.assertEqual(report_payload["curriculum_size"], 3)
+        self.assertEqual(report_payload["entries"][0]["label"], "good-policy")
+        self.assertEqual(report_payload["entries"][0]["rank"], 1)
+        self.assertEqual(report_payload["entries"][0]["metadata"]["curriculum_seed"], 17)
 
     def test_main_training_mode_saves_policy_file(self) -> None:
         with TemporaryDirectory() as temp_dir:

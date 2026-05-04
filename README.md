@@ -60,6 +60,56 @@ python ai_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80
 
 When the saved policy includes training metadata, AI mode will also print the curriculum size, curriculum seed, and average training reward recorded in that file.
 
+If the same policy file also carries held-out evaluation metadata, AI mode will additionally print the evaluation seed and average held-out reward.
+
+## Run Evaluation Mode
+
+Use the shared main entry point with `--mode evaluate`:
+
+```bash
+python main.py --mode evaluate --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --policy-file policies/target-policy.json
+```
+
+Or use the dedicated evaluation entry point:
+
+```bash
+python eval_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --policy-file policies/target-policy.json
+```
+
+Evaluation mode scores a policy across a deterministic held-out curriculum and reports total reward, average reward, success rate, and the anchor target's final state. This is intended for checking generalization on targets outside the training seed.
+
+To merge the held-out evaluation summary back into the policy file, add `--save-evaluation-metadata`:
+
+```bash
+python eval_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --policy-file policies/target-policy.json --save-evaluation-metadata
+```
+
+That preserves the existing training metadata and appends a held-out evaluation summary to the same policy JSON.
+
+## Run Compare Mode
+
+Use the shared main entry point with `--mode compare`:
+
+```bash
+python main.py --mode compare --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --compare-policy policies/good-policy.json --compare-policy policies/baseline-policy.json
+```
+
+Or use the dedicated comparison entry point:
+
+```bash
+python compare_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --compare-policy policies/good-policy.json --compare-policy policies/baseline-policy.json
+```
+
+Compare mode evaluates each listed policy on the same deterministic held-out curriculum and prints a ranking ordered by average reward, with success rate and anchor-target outcome for each policy.
+
+To save the same ranking as a JSON report, add `--save-comparison-report`:
+
+```bash
+python compare_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --curriculum-targets 3 --curriculum-seed 29 --target-range-x 6 --target-range-y 4 --target-range-z 2 --compare-policy policies/good-policy.json --compare-policy policies/baseline-policy.json --save-comparison-report reports/compare-report.json
+```
+
+The saved report captures the anchor target, curriculum seed and ranges, simulation step size, and the ranked comparison entries including any policy metadata already stored in the compared policy files.
+
 ## Run Training Mode
 
 Use the shared main entry point with `--mode train`:
@@ -115,6 +165,8 @@ Artificial_Operator/
 |-- main.py
 |-- ai_main.py
 |-- train_main.py
+|-- eval_main.py
+|-- compare_main.py
 |-- README.md
 |-- config/
 |   |-- actions.json

@@ -24,6 +24,13 @@ class TargetPolicyMetadata:
     best_average_reward: float | None = None
     success_rate: float | None = None
     anchor_stop_reason: str | None = None
+    evaluation_curriculum_size: int | None = None
+    evaluation_curriculum_seed: int | None = None
+    evaluation_target_ranges: tuple[float, float, float] | None = None
+    evaluation_total_reward: float | None = None
+    evaluation_average_reward: float | None = None
+    evaluation_success_rate: float | None = None
+    evaluation_anchor_stop_reason: str | None = None
 
 
 def save_target_policy_parameters(
@@ -50,13 +57,25 @@ def save_target_policy_parameters(
 
 
 def load_target_policy_parameters(file_path: str | Path) -> TargetPolicyParameters:
-    payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+    payload = _load_policy_payload(file_path)
     return parameters_from_payload(payload)
 
 
 def load_target_policy_metadata(file_path: str | Path) -> TargetPolicyMetadata | None:
-    payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+    payload = _load_policy_payload(file_path)
     return metadata_from_payload(payload)
+
+
+def update_target_policy_metadata(
+    file_path: str | Path,
+    metadata_updates: TargetPolicyMetadata,
+) -> Path:
+    path = Path(file_path)
+    payload = _load_policy_payload(path)
+    parameters = parameters_from_payload(payload)
+    existing_metadata = metadata_from_payload(payload)
+    merged_metadata = merge_target_policy_metadata(existing_metadata, metadata_updates)
+    return save_target_policy_parameters(path, parameters, metadata=merged_metadata)
 
 
 def parameters_from_payload(payload: dict[str, Any]) -> TargetPolicyParameters:
@@ -95,6 +114,62 @@ def metadata_from_payload(payload: dict[str, Any]) -> TargetPolicyMetadata | Non
         best_average_reward=_optional_float(raw_metadata.get("best_average_reward")),
         success_rate=_optional_float(raw_metadata.get("success_rate")),
         anchor_stop_reason=_optional_str(raw_metadata.get("anchor_stop_reason")),
+        evaluation_curriculum_size=_optional_int(raw_metadata.get("evaluation_curriculum_size")),
+        evaluation_curriculum_seed=_optional_int(raw_metadata.get("evaluation_curriculum_seed")),
+        evaluation_target_ranges=_optional_vector3(raw_metadata.get("evaluation_target_ranges")),
+        evaluation_total_reward=_optional_float(raw_metadata.get("evaluation_total_reward")),
+        evaluation_average_reward=_optional_float(raw_metadata.get("evaluation_average_reward")),
+        evaluation_success_rate=_optional_float(raw_metadata.get("evaluation_success_rate")),
+        evaluation_anchor_stop_reason=_optional_str(raw_metadata.get("evaluation_anchor_stop_reason")),
+    )
+
+
+def merge_target_policy_metadata(
+    existing_metadata: TargetPolicyMetadata | None,
+    metadata_updates: TargetPolicyMetadata,
+) -> TargetPolicyMetadata:
+    if existing_metadata is None:
+        return metadata_updates
+
+    return TargetPolicyMetadata(
+        source=_coalesce(metadata_updates.source, existing_metadata.source),
+        training_rounds=_coalesce(metadata_updates.training_rounds, existing_metadata.training_rounds),
+        curriculum_size=_coalesce(metadata_updates.curriculum_size, existing_metadata.curriculum_size),
+        curriculum_seed=_coalesce(metadata_updates.curriculum_seed, existing_metadata.curriculum_seed),
+        anchor_target_position=_coalesce(metadata_updates.anchor_target_position, existing_metadata.anchor_target_position),
+        target_ranges=_coalesce(metadata_updates.target_ranges, existing_metadata.target_ranges),
+        best_total_reward=_coalesce(metadata_updates.best_total_reward, existing_metadata.best_total_reward),
+        best_average_reward=_coalesce(metadata_updates.best_average_reward, existing_metadata.best_average_reward),
+        success_rate=_coalesce(metadata_updates.success_rate, existing_metadata.success_rate),
+        anchor_stop_reason=_coalesce(metadata_updates.anchor_stop_reason, existing_metadata.anchor_stop_reason),
+        evaluation_curriculum_size=_coalesce(
+            metadata_updates.evaluation_curriculum_size,
+            existing_metadata.evaluation_curriculum_size,
+        ),
+        evaluation_curriculum_seed=_coalesce(
+            metadata_updates.evaluation_curriculum_seed,
+            existing_metadata.evaluation_curriculum_seed,
+        ),
+        evaluation_target_ranges=_coalesce(
+            metadata_updates.evaluation_target_ranges,
+            existing_metadata.evaluation_target_ranges,
+        ),
+        evaluation_total_reward=_coalesce(
+            metadata_updates.evaluation_total_reward,
+            existing_metadata.evaluation_total_reward,
+        ),
+        evaluation_average_reward=_coalesce(
+            metadata_updates.evaluation_average_reward,
+            existing_metadata.evaluation_average_reward,
+        ),
+        evaluation_success_rate=_coalesce(
+            metadata_updates.evaluation_success_rate,
+            existing_metadata.evaluation_success_rate,
+        ),
+        evaluation_anchor_stop_reason=_coalesce(
+            metadata_updates.evaluation_anchor_stop_reason,
+            existing_metadata.evaluation_anchor_stop_reason,
+        ),
     )
 
 
@@ -120,7 +195,27 @@ def _metadata_to_payload(metadata: TargetPolicyMetadata) -> dict[str, Any]:
         payload["success_rate"] = metadata.success_rate
     if metadata.anchor_stop_reason is not None:
         payload["anchor_stop_reason"] = metadata.anchor_stop_reason
+    if metadata.evaluation_curriculum_size is not None:
+        payload["evaluation_curriculum_size"] = metadata.evaluation_curriculum_size
+    if metadata.evaluation_curriculum_seed is not None:
+        payload["evaluation_curriculum_seed"] = metadata.evaluation_curriculum_seed
+    if metadata.evaluation_target_ranges is not None:
+        payload["evaluation_target_ranges"] = list(metadata.evaluation_target_ranges)
+    if metadata.evaluation_total_reward is not None:
+        payload["evaluation_total_reward"] = metadata.evaluation_total_reward
+    if metadata.evaluation_average_reward is not None:
+        payload["evaluation_average_reward"] = metadata.evaluation_average_reward
+    if metadata.evaluation_success_rate is not None:
+        payload["evaluation_success_rate"] = metadata.evaluation_success_rate
+    if metadata.evaluation_anchor_stop_reason is not None:
+        payload["evaluation_anchor_stop_reason"] = metadata.evaluation_anchor_stop_reason
     return payload
+
+
+def _coalesce(updated_value: Any, existing_value: Any) -> Any:
+    if updated_value is not None:
+        return updated_value
+    return existing_value
 
 
 def _optional_float(value: Any) -> float | None:
@@ -147,3 +242,7 @@ def _optional_vector3(value: Any) -> tuple[float, float, float] | None:
     if not isinstance(value, (list, tuple)) or len(value) != 3:
         raise ValueError("Vector metadata entries must be 3-item arrays")
     return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def _load_policy_payload(file_path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(file_path).read_text(encoding="utf-8-sig"))

@@ -8,6 +8,7 @@ from simulation.engine import SimulationEngine
 
 from .agents import ParameterizedTargetPositionAgent, TargetPolicyParameters
 from .models import AIRunResult, TargetPositionObjective
+from .persistence import TargetPolicyMetadata
 from .rewards import RewardModel
 from .runner import SimulationAIRunner
 
@@ -45,6 +46,134 @@ class TrainingResult:
     best_run_result: AIRunResult
     best_run_results: tuple[AIRunResult, ...]
     evaluations: tuple[TrainingEvaluation, ...]
+
+
+@dataclass(frozen=True)
+class PolicyEvaluationResult:
+    curriculum_size: int
+    total_reward: float
+    average_reward: float
+    success_rate: float
+    anchor_success: bool
+    anchor_stop_reason: str
+    anchor_distance_to_target: float
+    anchor_run_result: AIRunResult
+    run_results: tuple[AIRunResult, ...]
+
+
+@dataclass(frozen=True)
+class PolicyComparisonCandidate:
+    label: str
+    parameters: TargetPolicyParameters
+    metadata: TargetPolicyMetadata | None = None
+
+
+@dataclass(frozen=True)
+class PolicyComparisonEntry:
+    rank: int
+    label: str
+    average_reward: float
+    total_reward: float
+    success_rate: float
+    anchor_stop_reason: str
+    anchor_distance_to_target: float
+    metadata: TargetPolicyMetadata | None
+
+
+@dataclass(frozen=True)
+class PolicyComparisonResult:
+    curriculum_size: int
+    entries: tuple[PolicyComparisonEntry, ...]
+
+
+class TargetPositionPolicyEvaluator:
+    def __init__(
+        self,
+        engine_factory: EngineFactory,
+        reward_model: RewardModel | None = None,
+    ) -> None:
+        self._engine_factory = engine_factory
+        self._reward_model = reward_model
+
+    def evaluate(
+        self,
+        parameters: TargetPolicyParameters,
+        objective: TargetPositionObjective,
+        *,
+        dt_seconds: float | None = None,
+    ) -> PolicyEvaluationResult:
+        return self.evaluate_curriculum(parameters, (objective,), dt_seconds=dt_seconds)
+
+    def evaluate_curriculum(
+        self,
+        parameters: TargetPolicyParameters,
+        objectives: tuple[TargetPositionObjective, ...],
+        *,
+        dt_seconds: float | None = None,
+    ) -> PolicyEvaluationResult:
+        if not objectives:
+            raise ValueError("at least one objective is required")
+        run_results = _evaluate_policy_curriculum(
+            self._engine_factory,
+            self._reward_model,
+            parameters,
+            objectives,
+            dt_seconds,
+        )
+        return _summarize_policy_evaluation(run_results)
+
+
+class TargetPositionPolicyComparer:
+    def __init__(
+        self,
+        engine_factory: EngineFactory,
+        reward_model: RewardModel | None = None,
+    ) -> None:
+        self._evaluator = TargetPositionPolicyEvaluator(engine_factory, reward_model=reward_model)
+
+    def compare_curriculum(
+        self,
+        candidates: tuple[PolicyComparisonCandidate, ...],
+        objectives: tuple[TargetPositionObjective, ...],
+        *,
+        dt_seconds: float | None = None,
+    ) -> PolicyComparisonResult:
+        if len(candidates) < 2:
+            raise ValueError("at least two policy candidates are required")
+        if not objectives:
+            raise ValueError("at least one objective is required")
+
+        scored_candidates: list[tuple[PolicyComparisonCandidate, PolicyEvaluationResult]] = []
+        for candidate in candidates:
+            evaluation_result = self._evaluator.evaluate_curriculum(
+                candidate.parameters,
+                objectives,
+                dt_seconds=dt_seconds,
+            )
+            scored_candidates.append((candidate, evaluation_result))
+
+        ranked_candidates = sorted(
+            scored_candidates,
+            key=_comparison_sort_key,
+            reverse=True,
+        )
+        entries = tuple(
+            PolicyComparisonEntry(
+                rank=index,
+                label=candidate.label,
+                average_reward=evaluation_result.average_reward,
+                total_reward=evaluation_result.total_reward,
+                success_rate=evaluation_result.success_rate,
+                anchor_stop_reason=evaluation_result.anchor_stop_reason,
+                anchor_distance_to_target=evaluation_result.anchor_distance_to_target,
+                metadata=candidate.metadata,
+            )
+            for index, (candidate, evaluation_result) in enumerate(ranked_candidates, start=1)
+        )
+        return PolicyComparisonResult(
+            curriculum_size=len(objectives),
+            entries=entries,
+        )
 
 
 class TargetPositionPolicyTrainer:
@@ -128,10 +257,13 @@ class TargetPositionPolicyTrainer:
         objective: TargetPositionObjective,
         dt_seconds: float | None,
     ) -> AIRunResult:
-        engine = self._engine_factory()
-        agent = ParameterizedTargetPositionAgent(engine.list_thrusters(), parameters=parameters)
-        runner = SimulationAIRunner(engine, agent, reward_model=self._reward_model)
-        return runner.run(objective, dt_seconds=dt_seconds)
+        return _evaluate_policy_curriculum(
+            self._engine_factory,
+            self._reward_model,
+            parameters,
+            (objective,),
+            dt_seconds,
+        )[0]
 
     def _evaluate_curriculum(
         self,
@@ -139,7 +271,13 @@ class TargetPositionPolicyTrainer:
         objectives: tuple[TargetPositionObjective, ...],
         dt_seconds: float | None,
     ) -> tuple[AIRunResult, ...]:
-        return tuple(self._evaluate(parameters, objective, dt_seconds) for objective in objectives)
+        return _evaluate_policy_curriculum(
+            self._engine_factory,
+            self._reward_model,
+            parameters,
+            objectives,
+            dt_seconds,
+        )
 
     def _build_candidates(self, parameters: TargetPolicyParameters) -> tuple[TargetPolicyParameters, ...]:
         candidates = {
@@ -235,18 +373,60 @@ def _summarize_training_evaluation(
     parameters: TargetPolicyParameters,
     run_results: tuple[AIRunResult, ...],
 ) -> TrainingEvaluation:
+    evaluation_result = _summarize_policy_evaluation(run_results)
+    return TrainingEvaluation(
+        round_index=round_index,
+        parameters=parameters,
+        total_reward=evaluation_result.total_reward,
+        average_reward=evaluation_result.average_reward,
+        success=evaluation_result.success_rate == 1.0,
+        success_rate=evaluation_result.success_rate,
+        stop_reason=evaluation_result.anchor_stop_reason,
+        distance_to_target=evaluation_result.anchor_distance_to_target,
+        curriculum_size=evaluation_result.curriculum_size,
+    )
+
+
+def _evaluate_policy_curriculum(
+    engine_factory: EngineFactory,
+    reward_model: RewardModel | None,
+    parameters: TargetPolicyParameters,
+    objectives: tuple[TargetPositionObjective, ...],
+    dt_seconds: float | None,
+) -> tuple[AIRunResult, ...]:
+    run_results: list[AIRunResult] = []
+    for objective in objectives:
+        engine = engine_factory()
+        agent = ParameterizedTargetPositionAgent(engine.list_thrusters(), parameters=parameters)
+        runner = SimulationAIRunner(engine, agent, reward_model=reward_model)
+        run_results.append(runner.run(objective, dt_seconds=dt_seconds))
+    return tuple(run_results)
+
+
+def _summarize_policy_evaluation(run_results: tuple[AIRunResult, ...]) -> PolicyEvaluationResult:
     total_reward = sum(run_result.total_reward for run_result in run_results)
     success_count = sum(1 for run_result in run_results if run_result.success)
     anchor_run_result = run_results[0]
     curriculum_size = len(run_results)
-    return TrainingEvaluation(
-        round_index=round_index,
-        parameters=parameters,
+    return PolicyEvaluationResult(
+        curriculum_size=curriculum_size,
         total_reward=total_reward,
         average_reward=total_reward / curriculum_size,
-        success=success_count == curriculum_size,
         success_rate=success_count / curriculum_size,
-        stop_reason=anchor_run_result.stop_reason,
-        distance_to_target=anchor_run_result.distance_to_target,
-        curriculum_size=curriculum_size,
+        anchor_success=anchor_run_result.success,
+        anchor_stop_reason=anchor_run_result.stop_reason,
+        anchor_distance_to_target=anchor_run_result.distance_to_target,
+        anchor_run_result=anchor_run_result,
+        run_results=run_results,
+    )
+
+
+def _comparison_sort_key(
+    scored_candidate: tuple[PolicyComparisonCandidate, PolicyEvaluationResult],
+) -> tuple[float, float, float]:
+    _, evaluation_result = scored_candidate
+    return (
+        evaluation_result.average_reward,
+        evaluation_result.success_rate,
+        -evaluation_result.anchor_distance_to_target,
     )

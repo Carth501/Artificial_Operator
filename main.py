@@ -7,16 +7,24 @@ from typing import Sequence
 from simulation import SimulationEngine
 from simulation.ai import (
     ParameterizedTargetPositionAgent,
+    PolicyComparisonCandidate,
+    PolicyComparisonResult,
+    PolicyEvaluationResult,
     SimulationAIRunner,
     TargetPolicyMetadata,
+    TargetPolicyParameters,
     TargetPositionAgent,
     TargetPositionCurriculum,
+    TargetPositionPolicyComparer,
+    TargetPositionPolicyEvaluator,
     TargetPositionObjective,
     TargetPositionPolicyTrainer,
     build_target_position_curriculum,
     load_target_policy_metadata,
     load_target_policy_parameters,
+    save_policy_comparison_report,
     save_target_policy_parameters,
+    update_target_policy_metadata,
 )
 
 
@@ -24,9 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Artificial Operator Sandbox")
     parser.add_argument(
         "--mode",
-        choices=("manual", "ai", "train"),
+        choices=("manual", "ai", "train", "evaluate", "compare"),
         default="manual",
-        help="Choose the manual Tkinter app, the headless AI runner, or the headless policy trainer.",
+        help="Choose the manual app, the AI runner, the policy trainer, a held-out evaluator, or a policy comparer.",
     )
     parser.add_argument(
         "--config-dir",
@@ -65,10 +73,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional policy JSON file to load for AI mode or to use as the initial policy in training mode.",
     )
     parser.add_argument(
+        "--compare-policy",
+        type=Path,
+        action="append",
+        default=None,
+        help="Path to a saved policy JSON to compare in compare mode. Repeat this flag for multiple policies.",
+    )
+    parser.add_argument(
         "--save-policy",
         type=Path,
         default=None,
         help="Optional destination path for saving the best trained policy in training mode.",
+    )
+    parser.add_argument(
+        "--save-evaluation-metadata",
+        action="store_true",
+        help="When evaluating a saved policy, merge the held-out evaluation summary back into that same policy file.",
+    )
+    parser.add_argument(
+        "--save-comparison-report",
+        type=Path,
+        default=None,
+        help="Optional destination path for saving a JSON report from compare mode.",
     )
     parser.add_argument(
         "--curriculum-targets",
@@ -178,7 +204,7 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
         max_steps=args.max_steps,
         progress_interval=args.progress_every,
     )
-    curriculum = _build_training_curriculum(objective, args)
+    curriculum = _build_objective_curriculum(objective, args)
     trainer = TargetPositionPolicyTrainer(
         lambda: SimulationEngine.from_config_directory(config_directory),
     )
@@ -242,6 +268,110 @@ def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
     return 0 if best_run.success else 1
 
 
+def run_evaluation_mode(config_directory: Path, args: argparse.Namespace) -> int:
+    objective = TargetPositionObjective(
+        target_position=(args.target_x, args.target_y, args.target_z),
+        tolerance=args.tolerance,
+        settle_velocity=args.settle_velocity,
+        max_steps=args.max_steps,
+        progress_interval=args.progress_every,
+    )
+    curriculum = _build_objective_curriculum(objective, args)
+    evaluator = TargetPositionPolicyEvaluator(
+        lambda: SimulationEngine.from_config_directory(config_directory),
+    )
+    step_seconds = args.dt if args.dt is not None else SimulationEngine.from_config_directory(config_directory).tick_seconds
+    parameters, policy_suffix = _load_policy_for_evaluation(args.policy_file)
+    print(
+        "Evaluation mode objective | "
+        f"target={_format_vector(objective.target_position)} | "
+        f"evaluation_targets={len(curriculum.objectives)} | "
+        f"evaluation_seed={curriculum.seed} | "
+        f"tolerance={objective.tolerance:.2f} | "
+        f"settle_velocity={objective.settle_velocity:.2f} | "
+        f"max_steps={objective.max_steps} | "
+        f"dt={step_seconds:.2f} | "
+        f"{policy_suffix}"
+    )
+
+    evaluation_result = evaluator.evaluate_curriculum(
+        parameters,
+        curriculum.objectives,
+        dt_seconds=args.dt,
+    )
+
+    saved_evaluation_suffix = ""
+    if args.save_evaluation_metadata:
+        update_target_policy_metadata(
+            args.policy_file,
+            _build_evaluation_metadata(curriculum, evaluation_result),
+        )
+        saved_evaluation_suffix = f" | updated_policy={args.policy_file}"
+
+    print(
+        "Evaluation complete | "
+        f"evaluated_targets={evaluation_result.curriculum_size} | "
+        f"eval_total_reward={evaluation_result.total_reward:.3f} | "
+        f"eval_avg_reward={evaluation_result.average_reward:.3f} | "
+        f"eval_success_rate={evaluation_result.success_rate:.2f} | "
+        f"anchor_success={evaluation_result.anchor_success} | "
+        f"anchor_reason={evaluation_result.anchor_stop_reason}"
+        f"{saved_evaluation_suffix}"
+    )
+    _print_anchor_final_state(evaluation_result)
+    return 0
+
+
+def run_compare_mode(config_directory: Path, args: argparse.Namespace) -> int:
+    objective = TargetPositionObjective(
+        target_position=(args.target_x, args.target_y, args.target_z),
+        tolerance=args.tolerance,
+        settle_velocity=args.settle_velocity,
+        max_steps=args.max_steps,
+        progress_interval=args.progress_every,
+    )
+    curriculum = _build_objective_curriculum(objective, args)
+    comparer = TargetPositionPolicyComparer(
+        lambda: SimulationEngine.from_config_directory(config_directory),
+    )
+    step_seconds = args.dt if args.dt is not None else SimulationEngine.from_config_directory(config_directory).tick_seconds
+    candidates = _load_policy_comparison_candidates(args.compare_policy)
+    print(
+        "Compare mode objective | "
+        f"target={_format_vector(objective.target_position)} | "
+        f"evaluation_targets={len(curriculum.objectives)} | "
+        f"evaluation_seed={curriculum.seed} | "
+        f"compare_policies={len(candidates)} | "
+        f"dt={step_seconds:.2f}"
+    )
+
+    comparison_result = comparer.compare_curriculum(
+        candidates,
+        curriculum.objectives,
+        dt_seconds=args.dt,
+    )
+
+    saved_report_suffix = ""
+    if args.save_comparison_report is not None:
+        save_policy_comparison_report(
+            args.save_comparison_report,
+            objective,
+            curriculum,
+            comparison_result,
+            dt_seconds=step_seconds,
+        )
+        saved_report_suffix = f" | saved_report={args.save_comparison_report}"
+
+    print(
+        "Comparison complete | "
+        f"compared_policies={len(comparison_result.entries)} | "
+        f"evaluation_targets={comparison_result.curriculum_size}"
+        f"{saved_report_suffix}"
+    )
+    _print_comparison_entries(comparison_result)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -254,6 +384,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     _validate_ai_args(parser, args)
     if args.mode == "ai":
         return run_ai_mode(config_directory, args)
+    if args.mode == "evaluate":
+        return run_evaluation_mode(config_directory, args)
+    if args.mode == "compare":
+        return run_compare_mode(config_directory, args)
     return run_training_mode(config_directory, args)
 
 
@@ -277,6 +411,10 @@ def _validate_ai_args(parser: argparse.ArgumentParser, args: argparse.Namespace)
         parser.error("--training-rounds must be greater than zero.")
     if args.curriculum_targets <= 0:
         parser.error("--curriculum-targets must be greater than zero.")
+    if args.mode == "evaluate" and args.save_evaluation_metadata and args.policy_file is None:
+        parser.error("--save-evaluation-metadata requires --policy-file in evaluation mode.")
+    if args.mode == "compare" and (args.compare_policy is None or len(args.compare_policy) < 2):
+        parser.error("compare mode requires at least two --compare-policy values.")
     for field_name in ("target_range_x", "target_range_y", "target_range_z"):
         field_value = getattr(args, field_name)
         if field_value is not None and field_value < 0.0:
@@ -304,7 +442,7 @@ def _format_vector(vector: Sequence[float]) -> str:
     return f"({vector[0]:.2f}, {vector[1]:.2f}, {vector[2]:.2f})"
 
 
-def _build_training_curriculum(
+def _build_objective_curriculum(
     objective: TargetPositionObjective,
     args: argparse.Namespace,
 ) -> TargetPositionCurriculum:
@@ -358,7 +496,89 @@ def _format_policy_metadata(metadata: TargetPolicyMetadata) -> str:
         parts.append(f"curriculum_seed={metadata.curriculum_seed}")
     if metadata.best_average_reward is not None:
         parts.append(f"policy_avg_reward={metadata.best_average_reward:.3f}")
+    if metadata.evaluation_curriculum_seed is not None:
+        parts.append(f"eval_seed={metadata.evaluation_curriculum_seed}")
+    if metadata.evaluation_average_reward is not None:
+        parts.append(f"eval_avg_reward={metadata.evaluation_average_reward:.3f}")
     return " | ".join(parts)
+
+
+def _load_policy_for_evaluation(
+    policy_file: Path | None,
+) -> tuple[TargetPolicyParameters, str]:
+    if policy_file is None:
+        return TargetPolicyParameters(), "default_policy"
+
+    parameters = load_target_policy_parameters(policy_file)
+    metadata = load_target_policy_metadata(policy_file)
+    suffix = f"policy_file={policy_file}"
+    if metadata is not None:
+        suffix = f"{suffix} | {_format_policy_metadata(metadata)}"
+    return parameters, suffix
+
+
+def _print_anchor_final_state(evaluation_result: PolicyEvaluationResult) -> None:
+    anchor_run_result = evaluation_result.anchor_run_result
+    print(
+        "Anchor final state | "
+        f"position={_format_vector(anchor_run_result.final_position)} | "
+        f"velocity={_format_vector(anchor_run_result.final_velocity)} | "
+        f"distance={anchor_run_result.distance_to_target:.3f} | "
+        f"episode_steps={len(anchor_run_result.episode_steps)}"
+    )
+
+
+def _build_evaluation_metadata(
+    curriculum: TargetPositionCurriculum,
+    evaluation_result: PolicyEvaluationResult,
+) -> TargetPolicyMetadata:
+    return TargetPolicyMetadata(
+        evaluation_curriculum_size=evaluation_result.curriculum_size,
+        evaluation_curriculum_seed=curriculum.seed,
+        evaluation_target_ranges=curriculum.target_ranges,
+        evaluation_total_reward=evaluation_result.total_reward,
+        evaluation_average_reward=evaluation_result.average_reward,
+        evaluation_success_rate=evaluation_result.success_rate,
+        evaluation_anchor_stop_reason=evaluation_result.anchor_stop_reason,
+    )
+
+
+def _load_policy_comparison_candidates(
+    policy_files: list[Path] | None,
+) -> tuple[PolicyComparisonCandidate, ...]:
+    if not policy_files:
+        return ()
+
+    candidates: list[PolicyComparisonCandidate] = []
+    for policy_file in policy_files:
+        candidates.append(
+            PolicyComparisonCandidate(
+                label=policy_file.stem,
+                parameters=load_target_policy_parameters(policy_file),
+                metadata=load_target_policy_metadata(policy_file),
+            )
+        )
+    return tuple(candidates)
+
+
+def _print_comparison_entries(comparison_result: PolicyComparisonResult) -> None:
+    for entry in comparison_result.entries:
+        metadata_suffix = ""
+        if entry.metadata is not None:
+            formatted_metadata = _format_policy_metadata(entry.metadata)
+            if formatted_metadata:
+                metadata_suffix = f" | {formatted_metadata}"
+        print(
+            "Comparison rank | "
+            f"rank={entry.rank} | "
+            f"label={entry.label} | "
+            f"avg_reward={entry.average_reward:.3f} | "
+            f"total_reward={entry.total_reward:.3f} | "
+            f"success_rate={entry.success_rate:.2f} | "
+            f"anchor_reason={entry.anchor_stop_reason} | "
+            f"anchor_distance={entry.anchor_distance_to_target:.3f}"
+            f"{metadata_suffix}"
+        )
 
 
 if __name__ == "__main__":
