@@ -23,10 +23,23 @@ class ThrusterSpec:
     acceleration_per_second: float
 
 
-class TargetPositionAgent:
-    def __init__(self, thrusters: tuple[dict[str, Any], ...]) -> None:
+@dataclass(frozen=True)
+class TargetPolicyParameters:
+    brake_distance_multiplier: float = 1.0
+    approach_distance_multiplier: float = 2.0
+    approach_velocity_multiplier: float = 1.0
+    settle_velocity_multiplier: float = 1.0
+
+
+class ParameterizedTargetPositionAgent:
+    def __init__(
+        self,
+        thrusters: tuple[dict[str, Any], ...],
+        parameters: TargetPolicyParameters | None = None,
+    ) -> None:
         self._thrusters_by_axis: dict[str, dict[int, ThrusterSpec]] = {axis: {} for axis in AXES}
         self._acceleration_by_axis: dict[str, float] = {axis: 0.0 for axis in AXES}
+        self._parameters = TargetPolicyParameters() if parameters is None else parameters
 
         for thruster in thrusters:
             axis = str(thruster["axis"]).lower()
@@ -68,12 +81,13 @@ class TargetPositionAgent:
         target_position = objective.target_position[axis_index]
         displacement = target_position - current_position
         acceleration = self._acceleration_by_axis[axis]
+        settle_velocity_threshold = objective.settle_velocity * self._parameters.settle_velocity_multiplier
 
         if acceleration <= 0.0:
             return None
 
         if abs(displacement) <= objective.tolerance:
-            if abs(current_velocity) <= objective.settle_velocity:
+            if abs(current_velocity) <= settle_velocity_threshold:
                 return None
             return self._action_for_direction(axis, -current_velocity)
 
@@ -82,10 +96,13 @@ class TargetPositionAgent:
             return self._action_for_direction(axis, target_direction)
 
         stopping_distance = (current_velocity * current_velocity) / (2.0 * acceleration)
-        if stopping_distance >= abs(displacement):
+        if stopping_distance * self._parameters.brake_distance_multiplier >= abs(displacement):
             return self._action_for_direction(axis, -current_velocity)
 
-        if abs(displacement) <= objective.tolerance * 2.0 and abs(current_velocity) > objective.settle_velocity:
+        if (
+            abs(displacement) <= objective.tolerance * self._parameters.approach_distance_multiplier
+            and abs(current_velocity) > settle_velocity_threshold * self._parameters.approach_velocity_multiplier
+        ):
             return self._action_for_direction(axis, -current_velocity)
 
         return self._action_for_direction(axis, target_direction)
@@ -96,3 +113,8 @@ class TargetPositionAgent:
         if spec is None:
             return None
         return spec.action_id
+
+
+class TargetPositionAgent(ParameterizedTargetPositionAgent):
+    def __init__(self, thrusters: tuple[dict[str, Any], ...]) -> None:
+        super().__init__(thrusters, parameters=TargetPolicyParameters())

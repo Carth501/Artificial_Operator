@@ -6,7 +6,8 @@ from typing import Any, Callable
 from simulation.engine import SimulationEngine
 
 from .agents import Agent
-from .models import AIRunResult, ObjectiveStatus, Observation, TargetPositionObjective, Vector3
+from .models import AIRunResult, EpisodeStep, ObjectiveStatus, Observation, TargetPositionObjective, Vector3
+from .rewards import RewardModel, TargetPositionRewardModel
 
 
 ProgressCallback = Callable[[int, Observation, ObjectiveStatus], None]
@@ -58,9 +59,15 @@ def evaluate_objective(observation: Observation, objective: TargetPositionObject
 
 
 class SimulationAIRunner:
-    def __init__(self, engine: SimulationEngine, agent: Agent) -> None:
+    def __init__(
+        self,
+        engine: SimulationEngine,
+        agent: Agent,
+        reward_model: RewardModel | None = None,
+    ) -> None:
         self._engine = engine
         self._agent = agent
+        self._reward_model = TargetPositionRewardModel() if reward_model is None else reward_model
 
     def run(
         self,
@@ -77,16 +84,55 @@ class SimulationAIRunner:
         observation = build_observation(snapshot)
         status = evaluate_objective(observation, objective)
         if status.success:
-            return self._build_result(snapshot, status, 0, "target_reached")
+            return self._build_result(snapshot, status, 0, "target_reached", 0.0, ())
         if not observation.operational_thrusters:
-            return self._build_result(snapshot, status, 0, "no_operational_thrusters")
+            return self._build_result(snapshot, status, 0, "no_operational_thrusters", 0.0, ())
+
+        total_reward = 0.0
+        episode_steps: list[EpisodeStep] = []
 
         for step_index in range(1, objective.max_steps + 1):
+            previous_observation = observation
+            previous_status = status
             requested_actions = self._agent.select_actions(observation, objective)
             self._engine.set_active_actions(requested_actions)
             snapshot = self._engine.step(dt_seconds)
             observation = build_observation(snapshot)
             status = evaluate_objective(observation, objective)
+
+            stop_reason: str | None = None
+            if status.success:
+                stop_reason = "target_reached"
+            else:
+                stop_reason = _detect_blocker(snapshot, observation, requested_actions)
+                if stop_reason is None and step_index == objective.max_steps:
+                    stop_reason = "step_limit_reached"
+
+            requested_actions_tuple = tuple(sorted(requested_actions))
+            reward_breakdown = self._reward_model.score_transition(
+                previous_observation,
+                previous_status,
+                observation,
+                status,
+                objective,
+                requested_actions_tuple,
+                stop_reason,
+            )
+            total_reward += reward_breakdown.total_reward
+            episode_steps.append(
+                EpisodeStep(
+                    step_index=step_index,
+                    elapsed_seconds=observation.elapsed_seconds,
+                    requested_actions=requested_actions_tuple,
+                    active_actions=observation.active_actions,
+                    position=observation.position,
+                    velocity=observation.velocity,
+                    distance_to_target=status.distance_to_target,
+                    stop_reason=stop_reason,
+                    reward=reward_breakdown.total_reward,
+                    reward_breakdown=reward_breakdown,
+                )
+            )
 
             if progress_callback is not None and (
                 step_index == 1
@@ -95,20 +141,28 @@ class SimulationAIRunner:
             ):
                 progress_callback(step_index, observation, status)
 
-            if status.success:
-                self._engine.set_active_actions(())
-                snapshot = self._engine.snapshot()
-                return self._build_result(snapshot, status, step_index, "target_reached")
-
-            stop_reason = _detect_blocker(snapshot, observation, requested_actions)
             if stop_reason is not None:
                 self._engine.set_active_actions(())
                 snapshot = self._engine.snapshot()
-                return self._build_result(snapshot, status, step_index, stop_reason)
+                return self._build_result(
+                    snapshot,
+                    status,
+                    step_index,
+                    stop_reason,
+                    total_reward,
+                    tuple(episode_steps),
+                )
 
         self._engine.set_active_actions(())
         snapshot = self._engine.snapshot()
-        return self._build_result(snapshot, status, objective.max_steps, "step_limit_reached")
+        return self._build_result(
+            snapshot,
+            status,
+            objective.max_steps,
+            "step_limit_reached",
+            total_reward,
+            tuple(episode_steps),
+        )
 
     def _build_result(
         self,
@@ -116,6 +170,8 @@ class SimulationAIRunner:
         status: ObjectiveStatus,
         steps_completed: int,
         stop_reason: str,
+        total_reward: float,
+        episode_steps: tuple[EpisodeStep, ...],
     ) -> AIRunResult:
         observation = build_observation(snapshot)
         return AIRunResult(
@@ -128,6 +184,8 @@ class SimulationAIRunner:
             distance_to_target=status.distance_to_target,
             active_actions=observation.active_actions,
             alerts=observation.alerts,
+            total_reward=total_reward,
+            episode_steps=episode_steps,
         )
 
 

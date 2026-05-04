@@ -35,6 +35,29 @@ class ObjectiveStatus:
 
 
 @dataclass(frozen=True)
+class RewardBreakdown:
+    progress_reward: float
+    distance_penalty: float
+    action_penalty: float
+    terminal_reward: float
+    total_reward: float
+
+
+@dataclass(frozen=True)
+class EpisodeStep:
+    step_index: int
+    elapsed_seconds: float
+    requested_actions: tuple[str, ...]
+    active_actions: tuple[str, ...]
+    position: Vector3
+    velocity: Vector3
+    distance_to_target: float
+    stop_reason: str | None
+    reward: float
+    reward_breakdown: RewardBreakdown
+
+
+@dataclass(frozen=True)
 class AIRunResult:
     success: bool
     stop_reason: str
@@ -45,3 +68,5 @@ class AIRunResult:
     distance_to_target: float
     active_actions: tuple[str, ...]
     alerts: tuple[str, ...]
+    total_reward: float
+    episode_steps: tuple[EpisodeStep, ...]

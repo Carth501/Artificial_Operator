@@ -5,16 +5,16 @@ from pathlib import Path
 from typing import Sequence
 
 from simulation import SimulationEngine
-from simulation.ai import SimulationAIRunner, TargetPositionAgent, TargetPositionObjective
+from simulation.ai import SimulationAIRunner, TargetPositionAgent, TargetPositionObjective, TargetPositionPolicyTrainer
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Artificial Operator Sandbox")
     parser.add_argument(
         "--mode",
-        choices=("manual", "ai"),
+        choices=("manual", "ai", "train"),
         default="manual",
-        help="Choose the manual Tkinter app or the headless AI runner.",
+        help="Choose the manual Tkinter app, the headless AI runner, or the headless policy trainer.",
     )
     parser.add_argument(
         "--config-dir",
@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="Emit AI progress every N simulation steps.",
+    )
+    parser.add_argument(
+        "--training-rounds",
+        type=int,
+        default=6,
+        help="Number of policy-search rounds to run in training mode.",
     )
     return parser
 
@@ -85,16 +91,73 @@ def run_ai_mode(config_directory: Path, args: argparse.Namespace) -> int:
         f"success={result.success} | "
         f"reason={result.stop_reason} | "
         f"steps={result.steps_completed} | "
-        f"elapsed={result.elapsed_seconds:.2f}s"
+        f"elapsed={result.elapsed_seconds:.2f}s | "
+        f"reward={result.total_reward:.3f}"
     )
     print(
         "Final state | "
         f"position={_format_vector(result.final_position)} | "
         f"velocity={_format_vector(result.final_velocity)} | "
-        f"distance={result.distance_to_target:.3f}"
+        f"distance={result.distance_to_target:.3f} | "
+        f"episode_steps={len(result.episode_steps)}"
     )
 
     return 0 if result.success else 1
+
+
+def run_training_mode(config_directory: Path, args: argparse.Namespace) -> int:
+    objective = TargetPositionObjective(
+        target_position=(args.target_x, args.target_y, args.target_z),
+        tolerance=args.tolerance,
+        settle_velocity=args.settle_velocity,
+        max_steps=args.max_steps,
+        progress_interval=args.progress_every,
+    )
+    trainer = TargetPositionPolicyTrainer(
+        lambda: SimulationEngine.from_config_directory(config_directory),
+    )
+    step_seconds = args.dt if args.dt is not None else SimulationEngine.from_config_directory(config_directory).tick_seconds
+    print(
+        "Training mode objective | "
+        f"target={_format_vector(objective.target_position)} | "
+        f"rounds={args.training_rounds} | "
+        f"tolerance={objective.tolerance:.2f} | "
+        f"settle_velocity={objective.settle_velocity:.2f} | "
+        f"max_steps={objective.max_steps} | "
+        f"dt={step_seconds:.2f}"
+    )
+
+    training_result = trainer.train(
+        objective,
+        rounds=args.training_rounds,
+        dt_seconds=args.dt,
+    )
+    best_run = training_result.best_run_result
+
+    print(
+        "Training complete | "
+        f"rounds={training_result.training_rounds} | "
+        f"evaluations={len(training_result.evaluations)} | "
+        f"best_reward={training_result.best_total_reward:.3f} | "
+        f"success={best_run.success} | "
+        f"reason={best_run.stop_reason}"
+    )
+    print(
+        "Best policy | "
+        f"brake_distance_multiplier={training_result.best_parameters.brake_distance_multiplier:.3f} | "
+        f"approach_distance_multiplier={training_result.best_parameters.approach_distance_multiplier:.3f} | "
+        f"approach_velocity_multiplier={training_result.best_parameters.approach_velocity_multiplier:.3f} | "
+        f"settle_velocity_multiplier={training_result.best_parameters.settle_velocity_multiplier:.3f}"
+    )
+    print(
+        "Best final state | "
+        f"position={_format_vector(best_run.final_position)} | "
+        f"velocity={_format_vector(best_run.final_velocity)} | "
+        f"distance={best_run.distance_to_target:.3f} | "
+        f"episode_steps={len(best_run.episode_steps)}"
+    )
+
+    return 0 if best_run.success else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -107,7 +170,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_manual_mode(config_directory)
 
     _validate_ai_args(parser, args)
-    return run_ai_mode(config_directory, args)
+    if args.mode == "ai":
+        return run_ai_mode(config_directory, args)
+    return run_training_mode(config_directory, args)
 
 
 def _validate_ai_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -126,6 +191,8 @@ def _validate_ai_args(parser: argparse.ArgumentParser, args: argparse.Namespace)
         parser.error("--max-steps must be greater than zero.")
     if args.progress_every <= 0:
         parser.error("--progress-every must be greater than zero.")
+    if args.training_rounds <= 0:
+        parser.error("--training-rounds must be greater than zero.")
     if args.dt is not None and args.dt <= 0.0:
         parser.error("--dt must be greater than zero when provided.")
 

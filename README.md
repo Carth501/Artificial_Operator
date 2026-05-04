@@ -50,6 +50,24 @@ python ai_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80
 
 Both commands run the same modular AI runner. The current shipped agent is a deterministic target-seeking autopilot that tries to settle within the configured tolerance and velocity threshold.
 
+The AI runner now also reports an aggregate reward score and keeps per-step episode data, which is the current foundation for later reinforcement-learning experiments.
+
+## Run Training Mode
+
+Use the shared main entry point with `--mode train`:
+
+```bash
+python main.py --mode train --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --training-rounds 3
+```
+
+Or use the dedicated training entry point:
+
+```bash
+python train_main.py --target-x 5 --target-y 0 --target-z 0 --dt 0.5 --max-steps 80 --training-rounds 3
+```
+
+The current training loop is a deterministic policy-search pass over a parameterized target-position policy. It uses the same simulation runner and reward signal as inference mode, which keeps training and execution on a shared interface.
+
 ## Run Tests
 
 ```bash
@@ -70,6 +88,7 @@ python -m unittest tests.test_profiles tests.test_engine tests.test_ai
 Artificial_Operator/
 |-- main.py
 |-- ai_main.py
+|-- train_main.py
 |-- README.md
 |-- config/
 |   |-- actions.json
@@ -83,7 +102,8 @@ Artificial_Operator/
 |   |   |-- __init__.py
 |   |   |-- agents.py
 |   |   |-- models.py
-|   |   `-- runner.py
+|   |   |-- runner.py
+|   |   `-- training.py
 |   |-- engine.py
 |   |-- profiles.py
 |   `-- state.py

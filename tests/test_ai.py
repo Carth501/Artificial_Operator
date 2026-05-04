@@ -6,7 +6,13 @@ from pathlib import Path
 import unittest
 
 from main import main
-from simulation.ai import SimulationAIRunner, TargetPositionAgent, TargetPositionObjective
+from simulation.ai import (
+    SimulationAIRunner,
+    TargetPolicyParameters,
+    TargetPositionAgent,
+    TargetPositionObjective,
+    TargetPositionPolicyTrainer,
+)
 from simulation.engine import SimulationEngine
 
 
@@ -34,6 +40,10 @@ class SimulationAIRunnerTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "target_reached")
         self.assertAlmostEqual(result.final_position[0], 5.0, delta=objective.tolerance)
         self.assertLessEqual(abs(result.final_velocity[0]), objective.settle_velocity)
+        self.assertEqual(len(result.episode_steps), result.steps_completed)
+        self.assertGreater(result.total_reward, 0.0)
+        self.assertEqual(result.episode_steps[-1].stop_reason, "target_reached")
+        self.assertGreater(result.episode_steps[-1].reward_breakdown.terminal_reward, 0.0)
 
     def test_runner_reaches_mixed_axis_target(self) -> None:
         objective = TargetPositionObjective(
@@ -66,6 +76,9 @@ class SimulationAIRunnerTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.stop_reason, "step_limit_reached")
+        self.assertEqual(len(result.episode_steps), result.steps_completed)
+        self.assertLess(result.total_reward, 0.0)
+        self.assertEqual(result.episode_steps[-1].stop_reason, "step_limit_reached")
 
     def test_runner_reports_no_operational_thrusters(self) -> None:
         self.engine.set_module_integrity("propulsion", 0.0)
@@ -76,6 +89,8 @@ class SimulationAIRunnerTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.stop_reason, "no_operational_thrusters")
         self.assertEqual(result.steps_completed, 0)
+        self.assertEqual(result.episode_steps, ())
+        self.assertEqual(result.total_reward, 0.0)
 
 
 class AIModeCliTests(unittest.TestCase):
@@ -106,7 +121,65 @@ class AIModeCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("AI mode objective", stdout)
         self.assertIn("reason=target_reached", stdout)
+        self.assertIn("reward=", stdout)
         self.assertIn("Final state", stdout)
+
+
+class TrainingModeTests(unittest.TestCase):
+    def test_trainer_improves_reward_from_poor_initial_policy(self) -> None:
+        trainer = TargetPositionPolicyTrainer(lambda: SimulationEngine.from_config_directory(CONFIG_ROOT))
+        objective = TargetPositionObjective(
+            target_position=(5.0, 0.0, 0.0),
+            tolerance=0.6,
+            settle_velocity=0.6,
+            max_steps=80,
+        )
+        initial_parameters = TargetPolicyParameters(
+            brake_distance_multiplier=0.25,
+            approach_distance_multiplier=0.5,
+            approach_velocity_multiplier=2.5,
+            settle_velocity_multiplier=2.0,
+        )
+
+        result = trainer.train(
+            objective,
+            rounds=3,
+            dt_seconds=0.5,
+            initial_parameters=initial_parameters,
+        )
+
+        self.assertGreater(result.best_total_reward, result.evaluations[0].total_reward)
+        self.assertTrue(result.best_run_result.success)
+        self.assertEqual(result.best_run_result.stop_reason, "target_reached")
+
+    def test_main_training_mode_runs_headless(self) -> None:
+        output = StringIO()
+
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--mode",
+                    "train",
+                    "--target-x",
+                    "5",
+                    "--target-y",
+                    "0",
+                    "--target-z",
+                    "0",
+                    "--dt",
+                    "0.5",
+                    "--max-steps",
+                    "80",
+                    "--training-rounds",
+                    "3",
+                ]
+            )
+
+        stdout = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Training mode objective", stdout)
+        self.assertIn("Training complete", stdout)
+        self.assertIn("Best policy", stdout)
 
 
 if __name__ == "__main__":
