@@ -188,7 +188,11 @@ class SimulationApp:
 
         paused = bool(snapshot.get("paused", False))
         self._control_panel.set_paused(paused)
-        elapsed_seconds = float(snapshot.get("elapsed_seconds", 0.0))
+        elapsed_seconds_value = snapshot.get("elapsed_seconds", 0.0)
+        if isinstance(elapsed_seconds_value, int | float | str):
+            elapsed_seconds = float(elapsed_seconds_value)
+        else:
+            elapsed_seconds = 0.0
         state_label = "Paused" if paused else "Running"
         alerts = snapshot.get("alerts", ())
         failed_modules = 0
