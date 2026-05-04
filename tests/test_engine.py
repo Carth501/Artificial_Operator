@@ -23,13 +23,14 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 99.5)
         self.assertAlmostEqual(snapshot["variables"]["CO2"]["value"], 5.5)
 
-    def test_thrusters_burn_fuel_and_move_ship(self) -> None:
+    def test_thrusters_burn_h2_and_o2_and_move_ship(self) -> None:
         self.engine.start_action("thruster_x_positive")
         self.engine.step(2.0)
         self.engine.stop_action("thruster_x_positive")
         snapshot = self.engine.snapshot()
 
-        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 68.4)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 68.4)
+        self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 98.3)
         self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 3.0)
         self.assertAlmostEqual(snapshot["variables"]["position_x"]["value"], 6.0)
 
@@ -39,13 +40,15 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertAlmostEqual(snapshot["variables"]["electricity"]["value"], 20.4)
 
-    def test_conversion_moves_h2o_into_fuel(self) -> None:
-        applied = self.engine.trigger_conversion("convert_h2o_to_fuel")
+    def test_conversion_moves_h2o_into_h2_and_o2(self) -> None:
+        self.engine._state.values["O2"] = 50.0
+        applied = self.engine.trigger_conversion("convert_h2o_to_h2")
         snapshot = self.engine.snapshot()
 
         self.assertTrue(applied)
         self.assertAlmostEqual(snapshot["variables"]["H2O"]["value"], 78.0)
-        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 71.2)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 71.2)
+        self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 50.6)
 
     def test_snapshot_assigns_stable_module_numbers(self) -> None:
         snapshot = self.engine.snapshot()
@@ -57,12 +60,12 @@ class SimulationEngineTests(unittest.TestCase):
             snapshot["modules"][0]["systems_ids"],
             (
                 "battery_bank",
-                "fuel_tank",
+                "hydrogen_tank",
                 "oxygen_tank",
                 "nitrogen_tank",
                 "water_tank",
                 "carbon_dioxide_tank",
-                "fuel_conversion_machine",
+                "hydrogen_conversion_machine",
             ),
         )
         self.assertEqual(snapshot["modules"][1]["number"], 2)
@@ -117,10 +120,10 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertEqual(snapshot["modules"][0]["integrity"], 0.0)
         self.assertFalse(snapshot["modules"][0]["operational"])
-        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 0.0)
         self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 0.0)
         self.assertAlmostEqual(snapshot["variables"]["electricity"]["value"], 0.0)
-        self.assertFalse(self.engine.trigger_conversion("convert_h2o_to_fuel"))
+        self.assertFalse(self.engine.trigger_conversion("convert_h2o_to_h2"))
 
     def test_broken_solar_module_stops_power_feed_and_raises_alert(self) -> None:
         self.engine.set_module_integrity("solar_generation", 0.0)
@@ -145,7 +148,7 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertEqual(snapshot["active_actions"], ())
         self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 0.0)
-        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 70.0)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 70.0)
 
     def test_reset_restores_module_integrity_and_container_state(self) -> None:
         self.engine.set_module_integrity("resource_management", 0.0)
@@ -154,7 +157,7 @@ class SimulationEngineTests(unittest.TestCase):
 
         self.assertAlmostEqual(snapshot["modules"][0]["integrity"], 100.0)
         self.assertTrue(snapshot["modules"][0]["operational"])
-        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 70.0)
+        self.assertAlmostEqual(snapshot["variables"]["H2"]["value"], 70.0)
 
     def test_engine_accepts_new_variable_from_config(self) -> None:
         variables_payload = json.loads((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"))

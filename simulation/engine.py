@@ -88,6 +88,8 @@ class SimulationEngine:
                 "source_amount": conversion.source_amount,
                 "target_variable": conversion.target_variable,
                 "target_amount": conversion.target_amount,
+                "byproduct_variable": conversion.byproduct_variable,
+                "byproduct_amount": conversion.byproduct_amount,
             }
             for conversion in self._action_catalog.conversions.values()
         )
@@ -138,6 +140,8 @@ class SimulationEngine:
             return False
         if not self._variable_is_operational(conversion.target_variable):
             return False
+        if conversion.byproduct_variable is not None and not self._variable_is_operational(conversion.byproduct_variable):
+            return False
 
         source_value = self._state.values.get(conversion.source_variable, 0.0)
         if source_value < conversion.source_amount:
@@ -152,6 +156,12 @@ class SimulationEngine:
             conversion.target_variable,
             target_value + conversion.target_amount,
         )
+        if conversion.byproduct_variable is not None and conversion.byproduct_amount > 0.0:
+            byproduct_value = self._state.values.get(conversion.byproduct_variable, 0.0)
+            self._set_variable(
+                conversion.byproduct_variable,
+                byproduct_value + conversion.byproduct_amount,
+            )
         return True
 
     def toggle_pause(self) -> bool:
@@ -229,7 +239,7 @@ class SimulationEngine:
         effective_actions = {
             action_id for action_id in self._active_actions if self._action_is_operational(action_id, power_context)
         }
-        if self._state.values.get("Fuel", 0.0) <= 0.0:
+        if self._state.values.get("H2", 0.0) <= 0.0 or self._state.values.get("O2", 0.0) <= 0.0:
             return {
                 action_id
                 for action_id in effective_actions
@@ -433,6 +443,8 @@ class SimulationEngine:
             "source_amount": conversion.source_amount,
             "target_variable": conversion.target_variable,
             "target_amount": conversion.target_amount,
+            "byproduct_variable": conversion.byproduct_variable,
+            "byproduct_amount": conversion.byproduct_amount,
             "active": False,
             "operational": self._action_is_operational(conversion.action_id, power_context),
         }

@@ -6,14 +6,14 @@ Artificial Operator is a Python sandbox for simulating a small spaceship with co
 
 - O2 is consumed at a constant rate to simulate breathing.
 - CO2 is generated at a constant rate to mirror breathing output.
-- Fuel is consumed only while thrusters are active.
+- H2 and O2 are both consumed while thrusters are active.
 - H2O depletes irregularly using a seeded stochastic profile.
 - N2 is present as a passive variable and can be given behavior later.
 - Ship mass is tracked as a core ship property.
 - Position and velocity are tracked independently for x, y, and z.
 - Resource containers and action mechanisms live inside modules with integrity values.
 - A module that reaches 0 integrity fails all of its systems, disables its mechanisms, and drains its containers.
-- The UI includes live module displays, hold-to-fire thruster buttons, H2O-to-Fuel conversion, pause, and reset controls.
+- The UI includes live module displays, hold-to-fire thruster buttons, H2O-to-H2 conversion, pause, and reset controls.
 - New variables and actions can be added through configuration as long as they are assigned to systems in a module.
 
 ## Requirements
@@ -43,7 +43,7 @@ python -m unittest tests.test_profiles tests.test_engine
 
 - Press and hold a thruster button to apply acceleration on that axis.
 - Release the button to stop the thruster burn.
-- Click `Convert H2O to Fuel` to spend water and generate fuel.
+- Click `Convert H2O to H2` to spend water and generate hydrogen.
 - Click `Pause Simulation` to freeze time updates.
 - Click `Reset State` to restore the initial config-defined state.
 
@@ -118,7 +118,7 @@ Example variable definition:
 This file defines:
 
 - thruster actions, including axis, direction, and acceleration
-- conversion actions, including source and target variables plus amounts
+- conversion actions, including source and target variables plus amounts and optional byproducts
 
 Every action must be referenced by a mechanism system in `config/systems.json` before it can operate.
 
@@ -126,12 +126,14 @@ Example conversion definition:
 
 ```json
 {
-  "id": "convert_h2o_to_fuel",
-  "label": "Convert H2O to Fuel",
+  "id": "convert_h2o_to_h2",
+  "label": "Convert H2O to H2",
   "source_variable": "H2O",
   "source_amount": 2.0,
-  "target_variable": "Fuel",
-  "target_amount": 1.2
+  "target_variable": "H2",
+  "target_amount": 1.2,
+  "byproduct_variable": "O2",
+  "byproduct_amount": 0.6
 }
 ```
 
@@ -153,7 +155,7 @@ Example module definition:
   "label": "Resource Management",
   "initial_integrity": 100.0,
   "connections": ["propulsion", "solar_generation"],
-  "systems_ids": ["battery_bank", "oxygen_tank", "fuel_conversion_machine"]
+  "systems_ids": ["battery_bank", "oxygen_tank", "hydrogen_conversion_machine"]
 }
 ```
 
@@ -165,7 +167,7 @@ This file defines:
 - which variables or actions each system owns
 - optional mechanism power draw and power generation behavior
 
-The shipped config includes the Fuel, O2, N2, H2O, CO2, and electricity container systems under `resource_management`, the solar panel mechanism under `solar_generation`, and the thruster system under `propulsion`.
+The shipped config includes the H2, O2, N2, H2O, CO2, and electricity container systems under `resource_management`, the solar panel mechanism under `solar_generation`, and the thruster system under `propulsion`.
 
 Example system definition:
 
@@ -185,7 +187,7 @@ The engine uses a fixed real-time tick and simple Euler integration:
 1. Evaluate connected operational modules for power generation and mechanism draw.
 2. Raise an `Insufficient power` alert if connected modules do not have enough electricity to run their mechanism systems.
 3. Apply profile-driven changes for variables whose container systems are still operational.
-4. Apply any active thruster accelerations whose mechanism systems are still operational and have fuel available.
+4. Apply any active thruster accelerations whose mechanism systems are still operational and have both H2 and O2 available.
 5. Integrate velocity into position.
 6. Advance mission time.
 

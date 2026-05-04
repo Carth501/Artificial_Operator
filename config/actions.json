@@ -45,12 +45,14 @@
 	],
 	"conversions": [
 		{
-			"id": "convert_h2o_to_fuel",
-			"label": "Convert H2O to Fuel",
+			"id": "convert_h2o_to_h2",
+			"label": "Convert H2O to H2",
 			"source_variable": "H2O",
 			"source_amount": 2.0,
-			"target_variable": "Fuel",
-			"target_amount": 1.2
+			"target_variable": "H2",
+			"target_amount": 1.2,
+			"byproduct_variable": "O2",
+			"byproduct_amount": 0.6
 		}
 	]
 }

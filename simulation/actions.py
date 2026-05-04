@@ -22,6 +22,8 @@ class ConversionAction:
     source_amount: float
     target_variable: str
     target_amount: float
+    byproduct_variable: str | None = None
+    byproduct_amount: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,8 @@ def load_action_catalog(config_path: str | Path) -> ActionCatalog:
             source_amount=float(raw_conversion["source_amount"]),
             target_variable=raw_conversion["target_variable"],
             target_amount=float(raw_conversion["target_amount"]),
+            byproduct_variable=raw_conversion.get("byproduct_variable"),
+            byproduct_amount=float(raw_conversion.get("byproduct_amount", 0.0)),
         )
         if conversion.action_id in conversions or conversion.action_id in thrusters:
             raise ValueError(f"Duplicate action definition: {conversion.action_id}")

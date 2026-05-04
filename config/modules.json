@@ -10,12 +10,12 @@
 			],
 			"systems_ids": [
 				"battery_bank",
-				"fuel_tank",
+				"hydrogen_tank",
 				"oxygen_tank",
 				"nitrogen_tank",
 				"water_tank",
 				"carbon_dioxide_tank",
-				"fuel_conversion_machine"
+				"hydrogen_conversion_machine"
 			]
 		},
 		{

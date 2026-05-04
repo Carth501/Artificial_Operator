@@ -9,11 +9,11 @@
 			]
 		},
 		{
-			"id": "fuel_tank",
-			"label": "Fuel Tank",
+			"id": "hydrogen_tank",
+			"label": "Hydrogen Tank",
 			"kind": "container",
 			"variable_names": [
-				"Fuel"
+				"H2"
 			]
 		},
 		{
@@ -49,12 +49,12 @@
 			]
 		},
 		{
-			"id": "fuel_conversion_machine",
-			"label": "Fuel Conversion Machine",
+			"id": "hydrogen_conversion_machine",
+			"label": "Hydrogen Conversion Machine",
 			"kind": "mechanism",
 			"power_draw_per_second": 0.15,
 			"action_ids": [
-				"convert_h2o_to_fuel"
+				"convert_h2o_to_h2"
 			]
 		},
 		{

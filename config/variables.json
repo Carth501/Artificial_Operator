@@ -25,6 +25,19 @@
 				{
 					"type": "constant",
 					"rate_per_second": -0.05
+				},
+				{
+					"type": "action_rate",
+					"rate_per_second": -0.8,
+					"activation": "any",
+					"action_ids": [
+						"thruster_x_positive",
+						"thruster_x_negative",
+						"thruster_y_positive",
+						"thruster_y_negative",
+						"thruster_z_positive",
+						"thruster_z_negative"
+					]
 				}
 			]
 		},
@@ -40,8 +53,8 @@
 			"profiles": []
 		},
 		{
-			"name": "Fuel",
-			"label": "Fuel",
+			"name": "H2",
+			"label": "H2",
 			"group": "resource",
 			"unit": "kg",
 			"initial": 70.0,
