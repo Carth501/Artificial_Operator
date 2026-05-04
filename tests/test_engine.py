@@ -41,8 +41,38 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["variables"]["H2O"]["value"], 78.0)
         self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 71.2)
 
+    def test_failed_resource_module_drains_containers_and_blocks_conversion(self) -> None:
+        self.engine.set_module_integrity("resource_management", 0.0)
+        snapshot = self.engine.snapshot()
+
+        self.assertEqual(snapshot["modules"][0]["integrity"], 0.0)
+        self.assertFalse(snapshot["modules"][0]["operational"])
+        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["O2"]["value"], 0.0)
+        self.assertFalse(self.engine.trigger_conversion("convert_h2o_to_fuel"))
+
+    def test_failed_propulsion_module_blocks_thrusters(self) -> None:
+        self.engine.set_module_integrity("propulsion", 0.0)
+        self.engine.start_action("thruster_x_positive")
+        self.engine.step(2.0)
+        snapshot = self.engine.snapshot()
+
+        self.assertEqual(snapshot["active_actions"], ())
+        self.assertAlmostEqual(snapshot["variables"]["velocity_x"]["value"], 0.0)
+        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 70.0)
+
+    def test_reset_restores_module_integrity_and_container_state(self) -> None:
+        self.engine.set_module_integrity("resource_management", 0.0)
+        self.engine.reset()
+        snapshot = self.engine.snapshot()
+
+        self.assertAlmostEqual(snapshot["modules"][0]["integrity"], 100.0)
+        self.assertTrue(snapshot["modules"][0]["operational"])
+        self.assertAlmostEqual(snapshot["variables"]["Fuel"]["value"], 70.0)
+
     def test_engine_accepts_new_variable_from_config(self) -> None:
         variables_payload = json.loads((CONFIG_ROOT / "variables.json").read_text(encoding="utf-8"))
+        modules_payload = json.loads((CONFIG_ROOT / "modules.json").read_text(encoding="utf-8"))
         variables_payload["variables"].append(
             {
                 "name": "Power",
@@ -61,15 +91,25 @@ class SimulationEngineTests(unittest.TestCase):
                 ]
             }
         )
+        modules_payload["modules"][0]["systems"].append(
+            {
+                "id": "power_cell",
+                "label": "Power Cell",
+                "kind": "container",
+                "variable_names": ["Power"],
+            }
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             variables_path = temp_root / "variables.json"
             actions_path = temp_root / "actions.json"
+            modules_path = temp_root / "modules.json"
             variables_path.write_text(json.dumps(variables_payload), encoding="utf-8")
             actions_path.write_text((CONFIG_ROOT / "actions.json").read_text(encoding="utf-8"), encoding="utf-8")
+            modules_path.write_text(json.dumps(modules_payload), encoding="utf-8")
 
-            engine = SimulationEngine.from_paths(variables_path, actions_path)
+            engine = SimulationEngine.from_paths(variables_path, actions_path, modules_path)
             engine.step(4.0)
             snapshot = engine.snapshot()
 

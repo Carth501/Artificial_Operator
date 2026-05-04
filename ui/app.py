@@ -5,7 +5,7 @@ from tkinter import ttk
 
 from simulation.engine import SimulationEngine
 
-from .panels import APP_BACKGROUND, MotionPanel, ActionPanel, VariableGroupPanel
+from .panels import APP_BACKGROUND, ControlPanel, ModulePanel, MotionPanel, VariableGroupPanel
 
 
 class SimulationApp:
@@ -20,10 +20,12 @@ class SimulationApp:
         self._status_var = tk.StringVar(value="Initializing simulation...")
         self._tick_job: str | None = None
         self._group_panels: dict[str, VariableGroupPanel] = {}
+        self._module_panels: dict[str, ModulePanel] = {}
 
         self._configure_style()
-        self._build_layout()
-        self.refresh(self._engine.snapshot())
+        initial_snapshot = self._engine.snapshot()
+        self._build_layout(initial_snapshot)
+        self.refresh(initial_snapshot)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def run(self) -> None:
@@ -78,7 +80,7 @@ class SimulationApp:
             darkcolor="#2f7d63",
         )
 
-    def _build_layout(self) -> None:
+    def _build_layout(self, snapshot: dict[str, object]) -> None:
         shell = ttk.Frame(self.root, padding=20, style="App.TFrame")
         shell.pack(fill="both", expand=True)
         shell.columnconfigure(0, weight=3)
@@ -92,14 +94,14 @@ class SimulationApp:
         ttk.Label(header, text="Artificial Operator", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             header,
-            text="Spaceship sandbox with configurable resource profiles and manual flight controls.",
+            text="Spaceship sandbox with module integrity, container systems, and manual flight controls.",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Label(header, textvariable=self._status_var, style="Subtitle.TLabel").grid(row=0, column=1, rowspan=2, sticky="e")
 
-        self._variable_column = ttk.Frame(shell, style="App.TFrame")
-        self._variable_column.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
-        self._variable_column.columnconfigure(0, weight=1)
+        self._module_column = ttk.Frame(shell, style="App.TFrame")
+        self._module_column.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
+        self._module_column.columnconfigure(0, weight=1)
 
         right_column = ttk.Frame(shell, style="App.TFrame")
         right_column.grid(row=1, column=1, sticky="nsew")
@@ -108,20 +110,27 @@ class SimulationApp:
         self._motion_panel = MotionPanel(right_column)
         self._motion_panel.grid(row=0, column=0, sticky="new")
 
-        self._action_panel = ActionPanel(
+        self._core_column = ttk.Frame(right_column, style="App.TFrame")
+        self._core_column.grid(row=1, column=0, sticky="new", pady=(16, 0))
+        self._core_column.columnconfigure(0, weight=1)
+
+        self._control_panel = ControlPanel(
             right_column,
-            thrusters=self._engine.list_thrusters(),
-            conversions=self._engine.list_conversions(),
-            on_thruster_start=self._handle_thruster_start,
-            on_thruster_stop=self._handle_thruster_stop,
-            on_conversion=self._handle_conversion,
             on_pause=self._handle_pause,
             on_reset=self._handle_reset,
         )
-        self._action_panel.grid(row=1, column=0, sticky="new", pady=(16, 0))
+        self._control_panel.grid(row=2, column=0, sticky="new", pady=(16, 0))
+
+        modules = snapshot.get("modules", ())
+        if isinstance(modules, (list, tuple)):
+            self._render_modules(modules)
 
     def refresh(self, snapshot: dict[str, object]) -> None:
-        groups = snapshot["groups"]
+        modules = snapshot.get("modules", ())
+        if isinstance(modules, (list, tuple)):
+            self._render_modules(modules)
+
+        groups = snapshot.get("core_groups", {})
         if isinstance(groups, dict):
             self._render_variable_groups(groups)
 
@@ -132,16 +141,22 @@ class SimulationApp:
 
         active_actions = snapshot.get("active_actions", ())
         if isinstance(active_actions, tuple):
-            self._action_panel.set_active_actions(active_actions)
             status_suffix = ", ".join(active_actions) if active_actions else "Idle"
         else:
             status_suffix = "Idle"
 
         paused = bool(snapshot.get("paused", False))
-        self._action_panel.set_paused(paused)
+        self._control_panel.set_paused(paused)
         elapsed_seconds = float(snapshot.get("elapsed_seconds", 0.0))
         state_label = "Paused" if paused else "Running"
-        self._status_var.set(f"Mission time {elapsed_seconds:6.1f}s | {state_label} | {status_suffix}")
+        failed_modules = 0
+        module_count = 0
+        if isinstance(modules, (list, tuple)):
+            module_count = len(modules)
+            failed_modules = sum(1 for module in modules if not bool(module.get("operational", False)))
+        self._status_var.set(
+            f"Mission time {elapsed_seconds:6.1f}s | {state_label} | Modules {module_count} total, {failed_modules} failed | {status_suffix}"
+        )
 
     def _render_variable_groups(self, groups: dict[str, object]) -> None:
         panel_row = 0
@@ -155,7 +170,7 @@ class SimulationApp:
             panel = self._group_panels.get(group_name)
             if panel is None:
                 title = group_name.replace("_", " ").title()
-                panel = VariableGroupPanel(self._variable_column, title)
+                panel = VariableGroupPanel(self._core_column, title)
                 self._group_panels[group_name] = panel
             panel.grid(row=panel_row, column=0, sticky="ew", pady=(0, 16))
             panel.render(variables)
@@ -164,6 +179,35 @@ class SimulationApp:
 
         for group_name, panel in self._group_panels.items():
             if group_name not in active_groups:
+                panel.grid_remove()
+
+    def _render_modules(self, modules: list[object] | tuple[object, ...]) -> None:
+        active_module_ids: set[str] = set()
+        for row_index, module in enumerate(modules):
+            if not isinstance(module, dict):
+                continue
+
+            module_id = str(module.get("id", ""))
+            if not module_id:
+                continue
+
+            panel = self._module_panels.get(module_id)
+            if panel is None:
+                panel = ModulePanel(
+                    self._module_column,
+                    module=module,
+                    on_thruster_start=self._handle_thruster_start,
+                    on_thruster_stop=self._handle_thruster_stop,
+                    on_conversion=self._handle_conversion,
+                )
+                self._module_panels[module_id] = panel
+
+            panel.grid(row=row_index, column=0, sticky="ew", pady=(0, 16))
+            panel.render(module)
+            active_module_ids.add(module_id)
+
+        for module_id, panel in self._module_panels.items():
+            if module_id not in active_module_ids:
                 panel.grid_remove()
 
     def _handle_thruster_start(self, action_id: str) -> None:

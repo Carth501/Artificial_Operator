@@ -1,6 +1,6 @@
 # Artificial Operator
 
-Artificial Operator is a Python sandbox for simulating a small spaceship with configurable life-support and motion variables. The first version is a Tkinter desktop app backed by a config-driven simulation engine, so you can change rates, actions, and variables without rewriting the core loop.
+Artificial Operator is a Python sandbox for simulating a small spaceship with configurable life-support and motion variables. The current version is a Tkinter desktop app backed by a config-driven simulation engine with explicit modules and systems, so you can change rates, actions, containers, and module ownership without rewriting the core loop.
 
 ## Current Scope
 
@@ -9,9 +9,12 @@ Artificial Operator is a Python sandbox for simulating a small spaceship with co
 - Fuel is consumed only while thrusters are active.
 - H2O depletes irregularly using a seeded stochastic profile.
 - N2 is present as a passive variable and can be given behavior later.
+- Ship mass is tracked as a core ship property.
 - Position and velocity are tracked independently for x, y, and z.
-- The UI includes live variable displays, hold-to-fire thruster buttons, H2O-to-Fuel conversion, pause, and reset controls.
-- New variables can be added through configuration.
+- Resource containers and action mechanisms live inside modules with integrity values.
+- A module that reaches 0 integrity fails all of its systems, disables its mechanisms, and drains its containers.
+- The UI includes live module displays, hold-to-fire thruster buttons, H2O-to-Fuel conversion, pause, and reset controls.
+- New variables and actions can be added through configuration as long as they are assigned to systems in a module.
 
 ## Requirements
 
@@ -52,6 +55,7 @@ Artificial_Operator/
 |-- README.md
 |-- config/
 |   |-- actions.json
+|   |-- modules.json
 |   `-- variables.json
 |-- simulation/
 |   |-- __init__.py
@@ -70,7 +74,7 @@ Artificial_Operator/
 
 ## Configuration
 
-The sandbox is primarily driven by two JSON files.
+The sandbox is driven by three JSON files.
 
 ### `config/variables.json`
 
@@ -78,6 +82,8 @@ This file defines:
 
 - global simulation settings such as `tick_seconds` and `random_seed`
 - each variable's name, label, unit, initial value, bounds, display precision, and update profiles
+
+Variables that are not referenced by container systems in `config/modules.json` are treated as core ship state. The shipped config keeps `Mass`, `position_*`, and `velocity_*` outside modules.
 
 Each variable entry can include one or more profiles. The current built-in profile types are:
 
@@ -113,7 +119,7 @@ This file defines:
 - thruster actions, including axis, direction, and acceleration
 - conversion actions, including source and target variables plus amounts
 
-The UI reads these definitions through the engine, so adding new thruster or conversion entries updates the control panel automatically.
+Every action must be referenced by a mechanism system in `config/modules.json` before it can operate.
 
 Example conversion definition:
 
@@ -128,22 +134,59 @@ Example conversion definition:
 }
 ```
 
+### `config/modules.json`
+
+This file defines:
+
+- modules, including their labels and initial integrity values
+- systems inside each module
+- whether a system is a `container` for variables or a `mechanism` for actions
+- which variables or actions each system owns
+
+The shipped config includes a `resource_management` module for the Fuel, O2, N2, H2O, and CO2 container systems, plus the fuel conversion machine, and a `propulsion` module for the thruster system.
+
+Example module definition:
+
+```json
+{
+  "id": "resource_management",
+  "label": "Resource Management",
+  "initial_integrity": 100.0,
+  "systems": [
+    {
+      "id": "oxygen_tank",
+      "label": "Oxygen Tank",
+      "kind": "container",
+      "variable_names": ["O2"]
+    },
+    {
+      "id": "fuel_conversion_machine",
+      "label": "Fuel Conversion Machine",
+      "kind": "mechanism",
+      "action_ids": ["convert_h2o_to_fuel"]
+    }
+  ]
+}
+```
+
 ## Simulation Model
 
 The engine uses a fixed real-time tick and simple Euler integration:
 
-1. Apply profile-driven resource changes.
-2. Apply any active thruster accelerations to velocity.
+1. Apply profile-driven changes for variables whose container systems are still operational.
+2. Apply any active thruster accelerations whose mechanism systems are still operational and have fuel available.
 3. Integrate velocity into position.
 4. Advance mission time.
 
-This keeps the sandbox easy to tune and extend, but it is intentionally lightweight. It does not yet model ship mass, pressure, collisions, orbital mechanics, or persistence.
+If a module's integrity reaches 0, all of its systems fail immediately. Failed mechanism systems cannot operate, and failed container systems are drained to 0 and reject further writes until integrity is restored.
+
+This keeps the sandbox easy to tune and extend, but it is intentionally lightweight. It does not yet use mass in thrust calculations, and it does not yet model pressure, collisions, orbital mechanics, or persistence.
 
 ## Extending The Sandbox
 
 ### Add a new variable
 
-Add a new object to `config/variables.json` with a unique `name`, display metadata, and any profiles you want. Most new variables will appear in the UI automatically without changing engine code.
+Add a new object to `config/variables.json` with a unique `name`, display metadata, and any profiles you want. If the variable represents a capacity or stored resource, also add it to a `container` system in `config/modules.json`. Core ship variables can remain unowned.
 
 Example:
 
@@ -168,7 +211,7 @@ Example:
 
 ### Add a new action
 
-For additional thrusters or conversions, update `config/actions.json`. The existing UI is already built to render the configured thrusters and conversion buttons.
+For additional thrusters or conversions, update `config/actions.json` and then assign the action ID to a `mechanism` system in `config/modules.json`. The existing UI renders actions from the module snapshot, so correctly owned actions appear automatically.
 
 ### Add a new profile type
 
@@ -178,6 +221,7 @@ If you need behavior beyond `constant`, `action_rate`, or `stochastic`, add a ne
 
 - The simulation seed is fixed by default so stochastic behavior is repeatable unless you change `random_seed`.
 - Position and velocity are represented as named variables such as `position_x` and `velocity_z`, which keeps the state model generic.
+- Module integrity is runtime state and resets back to the configured `initial_integrity` values.
 - N2 is currently neutral by design; you can later give it leakage, balancing, or venting behavior through configuration or a new profile type.
 
 ## Next Useful Improvements

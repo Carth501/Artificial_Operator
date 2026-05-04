@@ -30,6 +30,10 @@ class ActionCatalog:
     conversions: dict[str, ConversionAction]
 
     @property
+    def action_ids(self) -> set[str]:
+        return set(self.thrusters) | set(self.conversions)
+
+    @property
     def thruster_ids(self) -> set[str]:
         return set(self.thrusters)
 
@@ -47,6 +51,8 @@ def load_action_catalog(config_path: str | Path) -> ActionCatalog:
             direction=float(raw_thruster["direction"]),
             acceleration_per_second=float(raw_thruster["acceleration_per_second"]),
         )
+        if thruster.action_id in thrusters or thruster.action_id in conversions:
+            raise ValueError(f"Duplicate action definition: {thruster.action_id}")
         thrusters[thruster.action_id] = thruster
 
     for raw_conversion in payload.get("conversions", []):
@@ -58,6 +64,8 @@ def load_action_catalog(config_path: str | Path) -> ActionCatalog:
             target_variable=raw_conversion["target_variable"],
             target_amount=float(raw_conversion["target_amount"]),
         )
+        if conversion.action_id in conversions or conversion.action_id in thrusters:
+            raise ValueError(f"Duplicate action definition: {conversion.action_id}")
         conversions[conversion.action_id] = conversion
 
     return ActionCatalog(thrusters=thrusters, conversions=conversions)

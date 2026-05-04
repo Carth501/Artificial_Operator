@@ -3,6 +3,16 @@
 	"random_seed": 17,
 	"variables": [
 		{
+			"name": "Mass",
+			"label": "Mass",
+			"group": "ship",
+			"unit": "kg",
+			"initial": 1200.0,
+			"minimum": 0.0,
+			"precision": 1,
+			"profiles": []
+		},
+		{
 			"name": "O2",
 			"label": "O2",
 			"group": "resource",

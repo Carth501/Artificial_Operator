@@ -12,6 +12,7 @@ TEXT_MUTED = "#6d5f54"
 THRUSTER_IDLE = "#d3b893"
 THRUSTER_ACTIVE = "#2f7d63"
 THRUSTER_TEXT = "#fffaf2"
+THRUSTER_DISABLED = "#ddd3c7"
 
 
 class VariableRow(ttk.Frame):
@@ -107,81 +108,191 @@ class MotionPanel(ttk.LabelFrame):
             self._velocity_vars[axis].set(f"{velocity.get(axis, 0.0):.2f}")
 
 
-class ActionPanel(ttk.LabelFrame):
+class ModulePanel(ttk.LabelFrame):
     def __init__(
         self,
         parent: ttk.Widget,
-        thrusters: tuple[dict[str, Any], ...],
-        conversions: tuple[dict[str, Any], ...],
+        module: dict[str, Any],
         on_thruster_start: Callable[[str], None],
         on_thruster_stop: Callable[[str], None],
         on_conversion: Callable[[str], None],
+    ) -> None:
+        super().__init__(parent, text=str(module.get("label", "Module")), padding=14, style="Card.TLabelframe")
+        self._thruster_buttons: dict[str, tk.Button] = {}
+        self._conversion_buttons: dict[str, ttk.Button] = {}
+        self._system_status_vars: dict[str, tk.StringVar] = {}
+        self._variable_rows: dict[str, VariableRow] = {}
+        self._integrity_var = tk.StringVar(value="Integrity 0.0")
+        self._status_var = tk.StringVar(value="Unknown")
+
+        self.columnconfigure(0, weight=1)
+        header = ttk.Frame(self, style="Panel.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        header.columnconfigure(0, weight=1)
+
+        ttk.Label(header, textvariable=self._integrity_var, style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self._status_var, style="AxisLabel.TLabel").grid(row=0, column=1, sticky="e")
+
+        self._integrity_bar = ttk.Progressbar(self, mode="determinate", maximum=100.0, style="Metric.Horizontal.TProgressbar")
+        self._integrity_bar.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+
+        self._content = ttk.Frame(self, style="Panel.TFrame")
+        self._content.grid(row=2, column=0, sticky="ew")
+        self._content.columnconfigure(0, weight=1)
+
+        self._build_systems(module, on_thruster_start, on_thruster_stop, on_conversion)
+        self.render(module)
+
+    def _build_systems(
+        self,
+        module: dict[str, Any],
+        on_thruster_start: Callable[[str], None],
+        on_thruster_stop: Callable[[str], None],
+        on_conversion: Callable[[str], None],
+    ) -> None:
+        systems = module.get("systems", [])
+        if not isinstance(systems, list):
+            return
+
+        for system_index, system in enumerate(systems):
+            system_id = str(system["id"])
+            section = ttk.Frame(self._content, style="Panel.TFrame", padding=(0, 0, 0, 0))
+            section.grid(row=system_index, column=0, sticky="ew", pady=(0, 16))
+            section.columnconfigure(0, weight=1)
+
+            header = ttk.Frame(section, style="Panel.TFrame")
+            header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+            header.columnconfigure(0, weight=1)
+            ttk.Label(header, text=str(system["label"]), style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
+            status_var = tk.StringVar(value="Unknown")
+            self._system_status_vars[system_id] = status_var
+            ttk.Label(header, textvariable=status_var, style="AxisLabel.TLabel").grid(row=0, column=1, sticky="e")
+
+            content_row = 1
+            variables = system.get("variables", [])
+            if isinstance(variables, list):
+                for variable in variables:
+                    row = VariableRow(section)
+                    row.grid(row=content_row, column=0, sticky="ew", pady=(0, 10))
+                    self._variable_rows[str(variable["name"])] = row
+                    content_row += 1
+
+            actions = system.get("actions", [])
+            if isinstance(actions, list) and actions:
+                action_frame = ttk.Frame(section, style="Panel.TFrame")
+                action_frame.grid(row=content_row, column=0, sticky="ew")
+                for column_index in (0, 1):
+                    action_frame.columnconfigure(column_index, weight=1)
+
+                for action_index, action in enumerate(actions):
+                    column_index = action_index % 2
+                    row_index = action_index // 2
+                    action_id = str(action["id"])
+                    pad = (0, 10 if column_index == 0 else 0)
+                    if action.get("kind") == "thruster":
+                        button = tk.Button(
+                            action_frame,
+                            text=str(action["label"]),
+                            font=("Bahnschrift SemiBold", 10),
+                            bg=THRUSTER_IDLE,
+                            fg=TEXT_PRIMARY,
+                            activebackground=THRUSTER_ACTIVE,
+                            activeforeground=THRUSTER_TEXT,
+                            disabledforeground=TEXT_MUTED,
+                            relief=tk.FLAT,
+                            bd=0,
+                            padx=12,
+                            pady=10,
+                            cursor="hand2",
+                            highlightthickness=0,
+                        )
+                        button.grid(row=row_index, column=column_index, sticky="ew", padx=pad, pady=6)
+                        button.bind("<ButtonPress-1>", lambda _event, current_id=action_id: on_thruster_start(current_id))
+                        button.bind("<ButtonRelease-1>", lambda _event, current_id=action_id: on_thruster_stop(current_id))
+                        button.bind("<Leave>", lambda _event, current_id=action_id: on_thruster_stop(current_id))
+                        self._thruster_buttons[action_id] = button
+                    else:
+                        button = ttk.Button(
+                            action_frame,
+                            text=str(action["label"]),
+                            style="Command.TButton",
+                            command=lambda current_id=action_id: on_conversion(current_id),
+                        )
+                        button.grid(row=row_index, column=column_index, sticky="ew", padx=pad, pady=6)
+                        self._conversion_buttons[action_id] = button
+
+    def render(self, module: dict[str, Any]) -> None:
+        self.configure(text=str(module.get("label", "Module")))
+        integrity = float(module.get("integrity", 0.0))
+        operational = bool(module.get("operational", False))
+        self._integrity_var.set(f"Integrity {integrity:5.1f}")
+        self._status_var.set("Operational" if operational else "Failed")
+        self._integrity_bar.configure(value=max(0.0, min(100.0, integrity)))
+
+        systems = module.get("systems", [])
+        if not isinstance(systems, list):
+            return
+
+        for system in systems:
+            system_id = str(system["id"])
+            status_var = self._system_status_vars.get(system_id)
+            if status_var is not None:
+                status_var.set("Operational" if system.get("operational", False) else "Failed")
+
+            variables = system.get("variables", [])
+            if isinstance(variables, list):
+                for variable in variables:
+                    row = self._variable_rows.get(str(variable["name"]))
+                    if row is not None:
+                        row.render(variable)
+
+            actions = system.get("actions", [])
+            if isinstance(actions, list):
+                for action in actions:
+                    action_id = str(action["id"])
+                    if action.get("kind") == "thruster":
+                        button = self._thruster_buttons.get(action_id)
+                        if button is None:
+                            continue
+                        if not action.get("operational", False):
+                            button.configure(state=tk.DISABLED, bg=THRUSTER_DISABLED, fg=TEXT_MUTED)
+                        elif action.get("active", False):
+                            button.configure(state=tk.NORMAL, bg=THRUSTER_ACTIVE, fg=THRUSTER_TEXT)
+                        else:
+                            button.configure(state=tk.NORMAL, bg=THRUSTER_IDLE, fg=TEXT_PRIMARY)
+                    else:
+                        button = self._conversion_buttons.get(action_id)
+                        if button is None:
+                            continue
+                        if action.get("operational", False):
+                            button.state(["!disabled"])
+                        else:
+                            button.state(["disabled"])
+
+
+class ControlPanel(ttk.LabelFrame):
+    def __init__(
+        self,
+        parent: ttk.Widget,
         on_pause: Callable[[], None],
         on_reset: Callable[[], None],
     ) -> None:
-        super().__init__(parent, text="Actions", padding=14, style="Card.TLabelframe")
-        self._thruster_buttons: dict[str, tk.Button] = {}
+        super().__init__(parent, text="Simulation", padding=14, style="Card.TLabelframe")
         self._pause_var = tk.StringVar(value="Pause Simulation")
-
-        thruster_frame = ttk.Frame(self, style="Panel.TFrame")
-        thruster_frame.grid(row=0, column=0, sticky="ew")
-
-        ttk.Label(thruster_frame, text="Thrusters", style="SectionTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        for index, thruster in enumerate(thrusters, start=1):
-            column_index = 0 if index % 2 == 1 else 1
-            row_index = ((index - 1) // 2) + 1
-            button = tk.Button(
-                thruster_frame,
-                text=thruster["label"],
-                font=("Bahnschrift SemiBold", 10),
-                bg=THRUSTER_IDLE,
-                fg=TEXT_PRIMARY,
-                activebackground=THRUSTER_ACTIVE,
-                activeforeground=THRUSTER_TEXT,
-                relief=tk.FLAT,
-                bd=0,
-                padx=12,
-                pady=10,
-                cursor="hand2",
-                highlightthickness=0,
-            )
-            button.grid(row=row_index, column=column_index, sticky="ew", padx=(0, 10 if column_index == 0 else 0), pady=6)
-            button.bind("<ButtonPress-1>", lambda _event, action_id=thruster["id"]: on_thruster_start(action_id))
-            button.bind("<ButtonRelease-1>", lambda _event, action_id=thruster["id"]: on_thruster_stop(action_id))
-            button.bind("<Leave>", lambda _event, action_id=thruster["id"]: on_thruster_stop(action_id))
-            self._thruster_buttons[thruster["id"]] = button
-
-        for column_index in (0, 1):
-            thruster_frame.columnconfigure(column_index, weight=1)
-
-        conversion_frame = ttk.Frame(self, style="Panel.TFrame")
-        conversion_frame.grid(row=1, column=0, sticky="ew", pady=(18, 0))
-        ttk.Label(conversion_frame, text="Conversion", style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
-
-        for row_index, conversion in enumerate(conversions, start=1):
-            ttk.Button(
-                conversion_frame,
-                text=conversion["label"],
-                style="Command.TButton",
-                command=lambda action_id=conversion["id"]: on_conversion(action_id),
-            ).grid(row=row_index, column=0, sticky="ew", pady=6)
-
-        control_frame = ttk.Frame(self, style="Panel.TFrame")
-        control_frame.grid(row=2, column=0, sticky="ew", pady=(18, 0))
-        ttk.Label(control_frame, text="Simulation", style="SectionTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        ttk.Button(control_frame, textvariable=self._pause_var, style="Command.TButton", command=on_pause).grid(row=1, column=0, sticky="ew", padx=(0, 8))
-        ttk.Button(control_frame, text="Reset State", style="Command.TButton", command=on_reset).grid(row=1, column=1, sticky="ew")
-        control_frame.columnconfigure(0, weight=1)
-        control_frame.columnconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
 
-    def set_active_actions(self, active_actions: tuple[str, ...]) -> None:
-        active_set = set(active_actions)
-        for action_id, button in self._thruster_buttons.items():
-            if action_id in active_set:
-                button.configure(bg=THRUSTER_ACTIVE, fg=THRUSTER_TEXT)
-            else:
-                button.configure(bg=THRUSTER_IDLE, fg=TEXT_PRIMARY)
+        ttk.Button(self, textvariable=self._pause_var, style="Command.TButton", command=on_pause).grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(0, 8),
+        )
+        ttk.Button(self, text="Reset State", style="Command.TButton", command=on_reset).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+        )
 
     def set_paused(self, paused: bool) -> None:
         self._pause_var.set("Resume Simulation" if paused else "Pause Simulation")
